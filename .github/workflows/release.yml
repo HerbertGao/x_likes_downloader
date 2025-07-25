@@ -19,9 +19,15 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: x_likes_downloader_linux_x86_64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: x_likes_downloader_linux_arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: x_likes_downloader_windows_x86_64.exe
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact_name: x_likes_downloader_windows_arm64.exe
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: x_likes_downloader_macos_x86_64
@@ -46,8 +52,12 @@ jobs:
         run: |
           if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
             cp target/${{ matrix.target }}/release/x_likes_downloader.exe x_likes_downloader_windows_x86_64.exe
+          elif [ "${{ matrix.target }}" = "aarch64-pc-windows-msvc" ]; then
+            cp target/${{ matrix.target }}/release/x_likes_downloader.exe x_likes_downloader_windows_arm64.exe
           elif [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
             cp target/${{ matrix.target }}/release/x_likes_downloader x_likes_downloader_linux_x86_64
+          elif [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            cp target/${{ matrix.target }}/release/x_likes_downloader x_likes_downloader_linux_arm64
           elif [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
             cp target/${{ matrix.target }}/release/x_likes_downloader x_likes_downloader_macos_x86_64
           elif [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
@@ -77,7 +87,9 @@ jobs:
         with:
           files: |
             x_likes_downloader_linux_x86_64/x_likes_downloader_linux_x86_64
+            x_likes_downloader_linux_arm64/x_likes_downloader_linux_arm64
             x_likes_downloader_windows_x86_64.exe/x_likes_downloader_windows_x86_64.exe
+            x_likes_downloader_windows_arm64.exe/x_likes_downloader_windows_arm64.exe
             x_likes_downloader_macos_x86_64/x_likes_downloader_macos_x86_64
             x_likes_downloader_macos_arm64/x_likes_downloader_macos_arm64
           draft: false
