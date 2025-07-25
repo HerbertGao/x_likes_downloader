@@ -63,7 +63,7 @@ update_version() {
     
     echo -e "${YELLOW}新版本: ${new_version}${NC}"
     
-    # 更新 Cargo.toml
+    # 更新 Cargo.toml (确保不包含v前缀)
     if [[ "$OSTYPE" == "darwin"* ]]; then
         # macOS
         sed -i '' "s/^version = \".*\"/version = \"${new_version}\"/" Cargo.toml

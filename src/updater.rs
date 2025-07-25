@@ -57,7 +57,7 @@ impl Updater {
 
     /// 比较版本号
     pub fn is_newer_version(current: &str, latest: &str) -> bool {
-        // 简单的版本比较，假设版本号格式为 v1.0.0.1
+        // 移除版本号前缀，支持 v1.0.0.1 和 1.0.0.1 格式
         let current_clean = current.trim_start_matches('v');
         let latest_clean = latest.trim_start_matches('v');
         
