@@ -21,7 +21,7 @@ pub struct Downloader {
 
 impl Downloader {
     pub fn new(config: Config) -> Result<Self> {
-        let mut client_builder = reqwest::Client::builder()
+        let client_builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(30));
 
         let client = client_builder.build()?;
