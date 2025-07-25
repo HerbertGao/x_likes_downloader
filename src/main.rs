@@ -31,11 +31,9 @@ enum Commands {
     /// 整理下载的文件
     Organize {
         /// 源目录
-        #[arg(default_value = "data/downloads")]
-        source_dir: String,
+        source_dir: Option<String>,
         /// 目标目录
-        #[arg(default_value = "data/organized")]
-        target_dir: String,
+        target_dir: Option<String>,
     },
 }
 
@@ -51,7 +49,30 @@ async fn main() -> Result<()> {
             run_download().await?;
         }
         Commands::Organize { source_dir, target_dir } => {
-            FileOrganizer::organize_files(source_dir, target_dir)?;
+            let config = config::Config::load()?;
+            let src_owned;
+            let tgt_owned;
+            let src = match source_dir {
+                Some(ref s) => s.as_str(),
+                None => {
+                    if config.download_dir.is_empty() {
+                        return Err(anyhow::anyhow!("请通过参数或.env指定源目录"));
+                    }
+                    src_owned = config.download_dir.clone();
+                    &src_owned
+                }
+            };
+            let tgt = match target_dir {
+                Some(ref t) => t.as_str(),
+                None => {
+                    if config.target_dir.is_empty() {
+                        return Err(anyhow::anyhow!("请通过参数或.env指定目标目录"));
+                    }
+                    tgt_owned = config.target_dir.clone();
+                    &tgt_owned
+                }
+            };
+            FileOrganizer::organize_files(src, tgt)?;
         }
     }
 
