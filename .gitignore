@@ -26,3 +26,4 @@ curl_command.txt
 *.temp
 
 .history/
+release/
