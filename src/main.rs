@@ -2,6 +2,7 @@ mod config;
 mod downloader;
 mod organize_files;
 mod setup;
+mod updater;
 mod x_api;
 
 use anyhow::Result;
@@ -11,6 +12,7 @@ use config::Config;
 use downloader::Downloader;
 use organize_files::FileOrganizer;
 use setup::SetupArgs;
+use updater::Updater;
 use x_api::XApi;
 
 #[derive(Parser)]
@@ -35,6 +37,8 @@ enum Commands {
         /// 目标目录
         target_dir: Option<String>,
     },
+    /// 检查并更新到最新版本
+    Update,
 }
 
 #[tokio::main]
@@ -73,6 +77,10 @@ async fn main() -> Result<()> {
                 }
             };
             FileOrganizer::organize_files(src, tgt)?;
+        }
+        Commands::Update => {
+            let updater = Updater::new()?;
+            updater.update().await?;
         }
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "x_likes_downloader"
-version = "0.1.0"
+version = "v1.0.0.1"
 edition = "2021"
 
 [dependencies]
