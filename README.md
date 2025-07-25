@@ -29,6 +29,7 @@
 - **Windows x86_64**: `x_likes_downloader_windows_x86_64.exe`
 
 下载后解压并运行：
+
 ```bash
 # macOS/Linux
 chmod +x x_likes_downloader
@@ -57,14 +58,15 @@ cargo install --path .
 项目已配置GitHub Actions自动构建多平台版本：
 
 1. 推送tag触发自动构建：
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+
+    ```bash
+    git tag v1.0.0
+    git push origin v1.0.0
+    ```
 
 2. 在 [GitHub Releases](https://github.com/your-username/x_likes_downloader/releases) 下载预编译版本
 
-详细说明请参考 [跨平台编译指南](README_CROSS_COMPILATION.md)
+    详细说明请参考 [跨平台编译指南](README_CROSS_COMPILATION.md)
 
 ## 使用方法
 
@@ -111,11 +113,13 @@ x_likes_downloader organize --source-dir downloads --target-dir organized
 ### 方法一：使用 .env 文件（推荐）
 
 1. 复制示例配置文件：
+
 ```bash
 cp env.example .env
 ```
 
 2. 编辑 `.env` 文件，根据需要修改配置：
+
 ```bash
 # 下载配置
 COUNT=50                    # 每次获取的推文数量

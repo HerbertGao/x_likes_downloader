@@ -173,18 +173,19 @@ impl Updater {
             fs::set_permissions(&temp_path, perms)?;
         }
         
-        // 备份原文件
+        // 备份原文件（无论文件名是什么）
         let backup_path = current_exe.with_extension("bak");
         if backup_path.exists() {
             fs::remove_file(&backup_path)?;
         }
         fs::rename(&current_exe, &backup_path)?;
         
-        // 替换为新文件
+        // 替换为新文件（保持原文件名）
         fs::rename(&temp_path, &current_exe)?;
         
         println!("更新完成！");
         println!("原文件已备份为: {}", backup_path.display());
+        println!("新文件路径: {}", current_exe.display());
         
         Ok(())
     }
@@ -197,14 +198,16 @@ impl Updater {
         println!("当前版本: {}", current_version);
         
         let latest_version = self.get_latest_version().await?;
-        println!("最新版本: {}", latest_version);
+        // 显示时去掉v前缀，让显示更协调
+        let display_version = latest_version.trim_start_matches('v');
+        println!("最新版本: {}", display_version);
         
         if !Self::is_newer_version(&current_version, &latest_version) {
             println!("当前已是最新版本！");
             return Ok(());
         }
         
-        println!("发现新版本: {}", latest_version);
+        println!("发现新版本: {}", display_version);
         println!("是否要更新？(y/N): ");
         
         // 简单的用户确认
