@@ -164,7 +164,7 @@ impl Updater {
         // 写入临时文件
         fs::write(&temp_path, &bytes)?;
         
-        // 设置执行权限（在Unix系统上）
+        // 设置执行权限
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -173,14 +173,14 @@ impl Updater {
             fs::set_permissions(&temp_path, perms)?;
         }
         
-        // 备份原文件（无论文件名是什么）
+        // 备份原文件
         let backup_path = current_exe.with_extension("bak");
         if backup_path.exists() {
             fs::remove_file(&backup_path)?;
         }
         fs::rename(&current_exe, &backup_path)?;
         
-        // 替换为新文件（保持原文件名）
+        // 替换为新文件
         fs::rename(&temp_path, &current_exe)?;
         
         println!("更新完成！");

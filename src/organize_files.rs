@@ -82,7 +82,7 @@ impl FileOrganizer {
                             // 移动文件到目标目录
                             match fs::rename(&file_path, &destination) {
                                 Ok(_) => {
-                                    println!("已将 {} 移动到 {:?} (用户名: {}, ID: {})", 
+                                    println!("已将 {} 移动到 {:?} - 用户: {}, ID: {}", 
                                         filename, target_folder_path, username, tweet_id);
                                     moved_count += 1;
                                 }

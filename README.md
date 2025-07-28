@@ -21,7 +21,7 @@
 
 ### 方法一：下载预编译版本（推荐）
 
-从 [GitHub Releases](https://github.com/your-username/x_likes_downloader/releases) 下载对应平台的预编译版本：
+从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台的预编译版本：
 
 - **macOS ARM64** (Apple Silicon): `x_likes_downloader_macos_arm64`
 - **macOS x86_64** (Intel): `x_likes_downloader_macos_x86_64`
@@ -64,7 +64,7 @@ cargo install --path .
     git push origin v1.0.0
     ```
 
-2. 在 [GitHub Releases](https://github.com/your-username/x_likes_downloader/releases) 下载预编译版本
+2. 在 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载预编译版本
 
     详细说明请参考 [跨平台编译指南](README_CROSS_COMPILATION.md)
 

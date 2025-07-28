@@ -164,12 +164,12 @@ impl Downloader {
             return Ok(Some(tweet_obj));
         }
 
-        // 路径2: tweet (直接结构)
+        // 路径2: 直接结构
         if let Some(tweet_obj) = tweet.get("tweet") {
             return Ok(Some(tweet_obj));
         }
 
-        // 路径3: 如果都没有，使用原始tweet
+        // 路径3: 使用原始tweet
         Ok(Some(tweet))
     }
 
