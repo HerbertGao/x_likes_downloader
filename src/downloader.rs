@@ -10,6 +10,8 @@ use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
+use chrono::DateTime;
+use filetime::{FileTime, set_file_times};
 
 use crate::config::Config;
 
@@ -77,6 +79,9 @@ impl Downloader {
         }
         let tweet_obj = tweet_obj.unwrap();
 
+        // 提取推文发布时间
+        let tweet_timestamp = self.extract_tweet_timestamp(&tweet_obj)?;
+
         // 提取作者用户名
         let username = self.extract_username(&tweet_obj)?;
 
@@ -126,6 +131,13 @@ impl Downloader {
 
             match self.download_media(media_url, &out_path, i + 1, total_media_count).await {
                 Ok(true) => {
+                    // 下载成功后设置文件时间为推文发布时间
+                    if let Some(ts) = tweet_timestamp {
+                        let ft = FileTime::from_unix_time(ts, 0);
+                        if let Err(e) = set_file_times(&out_path, ft, ft) {
+                            println!("设置文件时间失败 {:?}: {}", out_path, e);
+                        }
+                    }
                     download_success_count += 1;
                 }
                 Ok(false) => {
@@ -234,6 +246,29 @@ impl Downloader {
         }
 
         Ok(media_urls)
+    }
+
+    fn extract_tweet_timestamp(&self, tweet_obj: &Value) -> Result<Option<i64>> {
+        let legacy = tweet_obj.get("legacy").unwrap_or(&Value::Null);
+
+        // 尝试 created_at_ms （毫秒时间戳）
+        if let Some(ts_ms_str) = legacy.get("created_at_ms").and_then(|v| v.as_str()) {
+            if let Ok(ts_ms) = ts_ms_str.parse::<i64>() {
+                return Ok(Some(ts_ms / 1000));
+            }
+        }
+        if let Some(ts_ms) = legacy.get("created_at_ms").and_then(|v| v.as_i64()) {
+            return Ok(Some(ts_ms / 1000));
+        }
+
+        // 尝试 created_at 字符串，如 "Thu Apr 06 15:24:15 +0000 2017"
+        if let Some(created_at_str) = legacy.get("created_at").and_then(|v| v.as_str()) {
+            if let Ok(dt) = DateTime::parse_from_str(created_at_str, "%a %b %d %H:%M:%S %z %Y") {
+                return Ok(Some(dt.timestamp()));
+            }
+        }
+
+        Ok(None)
     }
 
     async fn download_media(&self, url: &str, out_path: &Path, current: usize, total: usize) -> Result<bool> {

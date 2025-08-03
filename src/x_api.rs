@@ -110,6 +110,7 @@ impl XApi {
                         for entry in entries {
                             if let Some(entry_id) = entry.get("entryId").and_then(|id| id.as_str()) {
                                 if entry_id.starts_with("tweet-") {
+
                                     tweets.push(entry.clone());
                                 } else if entry_id.starts_with("cursor-bottom-") {
                                     new_cursor = entry
