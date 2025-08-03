@@ -26,7 +26,9 @@
 - **macOS ARM64** (Apple Silicon): `x_likes_downloader_macos_arm64`
 - **macOS x86_64** (Intel): `x_likes_downloader_macos_x86_64`
 - **Linux x86_64**: `x_likes_downloader_linux_x86_64`
+- **Linux ARM64**: `x_likes_downloader_linux_arm64`
 - **Windows x86_64**: `x_likes_downloader_windows_x86_64.exe`
+- **Windows ARM64**: `x_likes_downloader_windows_arm64.exe`
 
 下载后解压并运行：
 
@@ -53,20 +55,6 @@ cargo build --release
 cargo install --path .
 ```
 
-### 方法三：使用GitHub Actions（推荐）
-
-项目已配置GitHub Actions自动构建多平台版本：
-
-1. 推送tag触发自动构建：
-
-    ```bash
-    git tag v1.0.0
-    git push origin v1.0.0
-    ```
-
-2. 在 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载预编译版本
-
-    详细说明请参考 [跨平台编译指南](README_CROSS_COMPILATION.md)
 
 ## 使用方法
 
@@ -156,10 +144,11 @@ x_likes_downloader/
 │   ├── main.rs           # 主程序入口和命令行界面
 │   ├── config.rs         # 配置管理
 │   ├── setup.rs          # 初始化工具
-│   ├── x_api.rs          # X API调用
+│   ├── x_api.rs          # X API 调用
 │   ├── downloader.rs     # 媒体下载器
+│   ├── updater.rs        # 版本检查与自动更新
 │   └── organize_files.rs # 文件整理工具
-├── data/
+├── data/                  # 运行时自动生成
 │   ├── private_tokens.env    # 私有令牌配置
 │   ├── downloads/            # 下载目录
 │   └── organized/            # 整理后的目录
@@ -201,6 +190,12 @@ x_likes_downloader/
 - 根据文件名解析用户信息
 - 自动分类整理文件
 - 处理重复文件
+
+### updater.rs
+
+- 检查 GitHub 上的最新版本
+- 判断当前版本是否需要更新
+- 下载并替换可执行文件（自动更新）
 
 ## 注意事项
 
