@@ -121,7 +121,6 @@ main() {
     local new_version=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
     run_tests
     build_release
-    create_release_package "$new_version"
     commit_changes "$new_version"
     git_tag "$new_version"
     push_to_remote "$new_version"
