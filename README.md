@@ -55,7 +55,6 @@ cargo build --release
 cargo install --path .
 ```
 
-
 ## 使用方法
 
 ### 1. 初始化配置
@@ -102,23 +101,23 @@ x_likes_downloader organize --source-dir downloads --target-dir organized
 
 1. 复制示例配置文件：
 
-```bash
-cp env.example .env
-```
+    ```bash
+    cp env.example .env
+    ```
 
 2. 编辑 `.env` 文件，根据需要修改配置：
 
-```bash
-# 下载配置
-COUNT=50                    # 每次获取的推文数量
-ALL=true                    # 是否下载所有点赞推文
-DOWNLOAD_DIR=data/downloads # 下载目录
-FILE_FORMAT={USERNAME}_{ID} # 文件命名格式
+    ```ini
+    # 下载配置
+    COUNT=50                    # 每次获取的推文数量
+    ALL=true                    # 是否下载所有点赞推文
+    DOWNLOAD_DIR=data/downloads # 下载目录
+    FILE_FORMAT={USERNAME}_{ID} # 文件命名格式
 
-# 自动整理
-AUTO_ORGANIZE=true          # 下载完成后自动整理
-TARGET_DIR=data/organized   # 整理目标目录
-```
+    # 自动整理
+    AUTO_ORGANIZE=true          # 下载完成后自动整理
+    TARGET_DIR=data/organized   # 整理目标目录
+    ```
 
 ### 方法二：环境变量
 
@@ -138,7 +137,7 @@ export TARGET_DIR="organized"      # 整理目标目录
 
 ## 项目结构
 
-```
+```text
 x_likes_downloader/
 ├── src/
 │   ├── main.rs           # 主程序入口和命令行界面
@@ -149,9 +148,7 @@ x_likes_downloader/
 │   ├── updater.rs        # 版本检查与自动更新
 │   └── organize_files.rs # 文件整理工具
 ├── data/                  # 运行时自动生成
-│   ├── private_tokens.env    # 私有令牌配置
-│   ├── downloads/            # 下载目录
-│   └── organized/            # 整理后的目录
+│   └── private_tokens.env    # 私有令牌配置
 ├── .env                      # 环境配置文件（用户创建）
 ├── env.example               # 示例配置文件
 └── Cargo.toml
