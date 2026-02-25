@@ -46,6 +46,15 @@ get_cargo_version() {
     grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/'
 }
 
+# 从 README.md 读取版本号
+get_readme_version() {
+    if [ ! -f "README.md" ]; then
+        echo ""
+        return
+    fi
+    grep -oE '版本 [0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?' README.md | head -1 | sed 's/版本 //'
+}
+
 # 更新 Cargo.toml 中的版本号（只更新 [package] 部分的版本）
 update_cargo_version() {
     local new_version=$1
@@ -103,12 +112,26 @@ calculate_new_version() {
 # 检查版本一致性
 check_versions() {
     local cargo_version=$(get_cargo_version)
+    local readme_version=$(get_readme_version)
 
     echo ""
     echo "版本号检查："
     echo "  Cargo.toml: $cargo_version"
-
-    print_success "版本检查完成"
+    
+    if [ -z "$readme_version" ]; then
+        echo "  README.md:  (未找到版本号)"
+        print_warning "README.md 中未找到版本号"
+        exit 1
+    else
+        echo "  README.md:  $readme_version"
+        
+        if [ "$cargo_version" = "$readme_version" ]; then
+            print_success "版本一致性检查通过"
+        else
+            print_error "版本不一致！Cargo.toml ($cargo_version) != README.md ($readme_version)"
+            exit 1
+        fi
+    fi
 }
 
 # 显示使用帮助
