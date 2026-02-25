@@ -236,16 +236,12 @@ impl FileOrganizer {
                     && token.chars().all(|c| c.is_ascii_digit())
             })
             // Fallback: accept >= 10 digits for historical short tweet IDs
-            // Skip first token to avoid misclassifying numeric usernames
+            // Use last match to avoid misclassifying numeric username sub-tokens
             .or_else(|| {
-                tokens
-                    .iter()
-                    .skip(1)
-                    .position(|token| {
-                        token.len() >= Self::TWEET_ID_MIN_DIGITS_FALLBACK
-                            && token.chars().all(|c| c.is_ascii_digit())
-                    })
-                    .map(|pos| pos + 1)
+                tokens.iter().rposition(|token| {
+                    token.len() >= Self::TWEET_ID_MIN_DIGITS_FALLBACK
+                        && token.chars().all(|c| c.is_ascii_digit())
+                })
             })
             .ok_or_else(|| "未找到 Tweet ID（需要 >= 10 位的纯数字）".to_string())?;
 

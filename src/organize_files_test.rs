@@ -86,3 +86,13 @@ fn test_parse_filename_numeric_username_with_short_tweet_id() {
     assert_eq!(user, "1234567890");
     assert_eq!(id, "9876543210");
 }
+
+#[test]
+fn test_parse_filename_username_with_numeric_subtoken() {
+    // Username with underscore and numeric sub-token: x_1234567890
+    // Should parse as username="x_1234567890", tweet_id="9876543210"
+    // NOT username="x", tweet_id="1234567890"
+    let (user, id) = FileOrganizer::parse_filename("x_1234567890_9876543210_photo.jpg").unwrap();
+    assert_eq!(user, "x_1234567890");
+    assert_eq!(id, "9876543210");
+}
