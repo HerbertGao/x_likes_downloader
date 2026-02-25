@@ -52,7 +52,10 @@ async fn main() -> Result<()> {
         Commands::Download => {
             run_download().await?;
         }
-        Commands::Organize { source_dir, target_dir } => {
+        Commands::Organize {
+            source_dir,
+            target_dir,
+        } => {
             let config = config::Config::load()?;
             let src_owned;
             let tgt_owned;
@@ -90,10 +93,10 @@ async fn main() -> Result<()> {
 async fn run_download() -> Result<()> {
     // 加载配置
     let config = Config::load()?;
-    
+
     // 创建API客户端
     let api = XApi::new(config.clone())?;
-    
+
     // 创建下载器
     let mut downloader = Downloader::new(config.clone())?;
 

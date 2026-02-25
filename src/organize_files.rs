@@ -48,23 +48,24 @@ impl FileOrganizer {
         for entry in fs::read_dir(a_path)? {
             let entry = entry?;
             let file_path = entry.path();
-            
+
             if file_path.is_file() {
                 let file_name = entry.file_name();
                 let filename = file_name.to_string_lossy();
-                
+
                 // 跳过配置文件
                 if filename == "username_aliases.txt" {
                     continue;
                 }
-                
+
                 // 使用新的解析函数
                 let parse_result = Self::parse_filename(&filename);
-                
+
                 match parse_result {
                     Ok((username, tweet_id)) => {
                         // 别名查询：若 username 在别名表中，替换为主名称
-                        let match_username = aliases.get(&username)
+                        let match_username = aliases
+                            .get(&username)
                             .cloned()
                             .unwrap_or_else(|| username.clone());
 
@@ -73,7 +74,8 @@ impl FileOrganizer {
                         for (folder_prefix, folder_path) in &b_folders {
                             if match_username == *folder_prefix
                                 || match_username.starts_with(&format!("{}_", folder_prefix))
-                                || folder_prefix.starts_with(&format!("{}_", match_username)) {
+                                || folder_prefix.starts_with(&format!("{}_", match_username))
+                            {
                                 target_folder = Some(folder_path);
                                 break;
                             }
@@ -81,7 +83,7 @@ impl FileOrganizer {
 
                         if let Some(target_folder_path) = target_folder {
                             let destination = target_folder_path.join(&*filename);
-                            
+
                             // 检查目标目录是否有同名文件
                             if destination.exists() {
                                 match Self::handle_duplicate_file(&file_path, &destination) {
@@ -95,25 +97,35 @@ impl FileOrganizer {
                                     }
                                 }
                             }
-                            
+
                             // 移动文件到目标目录
                             match fs::rename(&file_path, &destination) {
                                 Ok(_) => {
-                                    println!("已将 {} 移动到 {:?} - 用户: {}, ID: {}", 
-                                        filename, target_folder_path, username, tweet_id);
+                                    println!(
+                                        "已将 {} 移动到 {:?} - 用户: {}, ID: {}",
+                                        filename, target_folder_path, username, tweet_id
+                                    );
                                     moved_count += 1;
                                 }
                                 Err(e) => {
-                                    println!("移动文件失败: {} -> {:?}, 错误: {}", 
-                                        filename, destination, e);
+                                    println!(
+                                        "移动文件失败: {} -> {:?}, 错误: {}",
+                                        filename, destination, e
+                                    );
                                     error_count += 1;
                                 }
                             }
                         } else {
                             if match_username != username {
-                                println!("未找到用户名为 {}（别名 {} 的主名称）的目标文件夹，跳过 {}", match_username, username, filename);
+                                println!(
+                                    "未找到用户名为 {}（别名 {} 的主名称）的目标文件夹，跳过 {}",
+                                    match_username, username, filename
+                                );
                             } else {
-                                println!("未找到用户名为 {} 的目标文件夹，跳过 {}", username, filename);
+                                println!(
+                                    "未找到用户名为 {} 的目标文件夹，跳过 {}",
+                                    username, filename
+                                );
                             }
                             skipped_count += 1;
                         }
@@ -174,26 +186,27 @@ impl FileOrganizer {
     fn parse_filename(filename: &str) -> Result<(String, String), String> {
         let (filename_no_ext, _) = filename.rsplit_once('.').unwrap_or((filename, ""));
         let tokens: Vec<&str> = filename_no_ext.split('_').collect();
-        
+
         if tokens.len() < 3 {
             return Err("文件名格式错误：至少需要3个部分 (a_b_c)".to_string());
         }
-        
+
         // 找出所有纯数字的部分
-        let numeric_indices: Vec<usize> = tokens.iter()
+        let numeric_indices: Vec<usize> = tokens
+            .iter()
             .enumerate()
             .filter(|(_, token)| token.chars().all(|c| c.is_ascii_digit()))
             .map(|(i, _)| i)
             .collect();
-        
+
         if numeric_indices.is_empty() {
             return Err("未找到数字ID部分".to_string());
         }
-        
+
         // 选择最后一个数字作为Tweet ID
         let last_num_index = *numeric_indices.iter().max().unwrap();
         let tweet_id = tokens[last_num_index];
-        
+
         // 根据最后一个数字的位置确定用户名和原始文件名
         let username = if last_num_index == 0 {
             // 格式：数字_用户名_原始文件名
@@ -213,22 +226,25 @@ impl FileOrganizer {
             // 标准格式：用户名_数字_原始文件名
             tokens[..last_num_index].join("_")
         };
-        
+
         Ok((username, tweet_id.to_string()))
     }
 
     fn handle_duplicate_file(source_path: &Path, target_path: &Path) -> Result<()> {
         let source_size = fs::metadata(source_path)?.len();
         let target_size = fs::metadata(target_path)?.len();
-        
-        println!("发现同名文件: {}", source_path.file_name().unwrap().to_string_lossy());
+
+        println!(
+            "发现同名文件: {}",
+            source_path.file_name().unwrap().to_string_lossy()
+        );
         println!("  源文件大小: {} 字节", source_size);
         println!("  目标文件大小: {} 字节", target_size);
-        
+
         // 删除目标目录中的同名文件
         fs::remove_file(target_path)?;
         println!("  已删除目标目录中的同名文件: {:?}", target_path);
-        
+
         Ok(())
     }
-} 
+}
