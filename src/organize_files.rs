@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -64,10 +64,8 @@ impl FileOrganizer {
                 match parse_result {
                     Ok((username, tweet_id)) => {
                         // 别名查询：若 username 在别名表中，替换为主名称
-                        let match_username = aliases
-                            .get(&username)
-                            .cloned()
-                            .unwrap_or_else(|| username.clone());
+                        // 循环解析别名链，直到找到最终的主名称
+                        let match_username = Self::resolve_alias_chain(&username, &aliases);
                         let is_alias = match_username != username;
 
                         // 查找对应的目标文件夹
@@ -155,6 +153,21 @@ impl FileOrganizer {
         println!("处理错误: {}", error_count);
 
         Ok(())
+    }
+
+    fn resolve_alias_chain(username: &str, aliases: &HashMap<String, String>) -> String {
+        let mut current = username.to_string();
+        let mut visited = HashSet::new();
+
+        while let Some(next) = aliases.get(&current) {
+            if visited.contains(&current) {
+                break;
+            }
+            visited.insert(current.clone());
+            current = next.clone();
+        }
+
+        current
     }
 
     fn load_username_aliases(alias_file_path: &str) -> HashMap<String, String> {
