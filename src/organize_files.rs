@@ -159,6 +159,9 @@ impl FileOrganizer {
             Err(_) => return HashMap::new(),
         };
 
+        // 移除 UTF-8 BOM（如果存在）
+        let content = content.strip_prefix('\u{FEFF}').unwrap_or(&content);
+
         let mut aliases = HashMap::new();
         for line in content.lines() {
             let line = line.trim();

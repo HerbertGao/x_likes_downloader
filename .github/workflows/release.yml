@@ -219,8 +219,8 @@ jobs:
 
           ${CURRENT_BODY}"
 
-          # 更新 Release
-          gh release edit "v${VERSION}" --notes "$NEW_BODY"
+          # 更新 Release (使用 --notes-file - 从 stdin 读取以避免 shell 转义问题)
+          echo "$NEW_BODY" | gh release edit "v${VERSION}" --notes-file -
 
       - name: 检查发布状态
         run: |
