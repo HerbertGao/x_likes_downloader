@@ -78,3 +78,11 @@ fn test_parse_filename_no_valid_tweet_id() {
 fn test_parse_filename_too_few_tokens() {
     assert!(FileOrganizer::parse_filename("user_photo.jpg").is_err());
 }
+
+#[test]
+fn test_parse_filename_numeric_username_with_short_tweet_id() {
+    // 10-digit numeric username + 10-digit short tweet ID
+    let (user, id) = FileOrganizer::parse_filename("1234567890_9876543210_photo.jpg").unwrap();
+    assert_eq!(user, "1234567890");
+    assert_eq!(id, "9876543210");
+}
