@@ -161,7 +161,11 @@ impl FileOrganizer {
 
         while let Some(next) = aliases.get(&current) {
             if visited.contains(&current) {
-                break;
+                eprintln!(
+                    "警告: 检测到别名循环，涉及用户名 '{}'. 使用原始用户名。",
+                    username
+                );
+                return username.to_string();
             }
             visited.insert(current.clone());
             current = next.clone();
