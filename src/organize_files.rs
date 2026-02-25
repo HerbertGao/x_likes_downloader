@@ -53,6 +53,11 @@ impl FileOrganizer {
                 let file_name = entry.file_name();
                 let filename = file_name.to_string_lossy();
                 
+                // 跳过配置文件
+                if filename == "username_aliases.txt" {
+                    continue;
+                }
+                
                 // 使用新的解析函数
                 let parse_result = Self::parse_filename(&filename);
                 
@@ -153,6 +158,9 @@ impl FileOrganizer {
                 continue;
             }
             let primary = usernames[0].to_string();
+            if primary.is_empty() {
+                continue;
+            }
             for alias in &usernames[1..] {
                 if !alias.is_empty() {
                     aliases.insert(alias.to_string(), primary.clone());
