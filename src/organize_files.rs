@@ -217,6 +217,8 @@ impl FileOrganizer {
 
     /// Tweet ID minimum digits (Twitter Snowflake ID: 18-19 digits, username max: 15 chars)
     const TWEET_ID_MIN_DIGITS: usize = 16;
+    /// Fallback minimum for historical short tweet IDs (pre-2010 Twitter IDs)
+    const TWEET_ID_MIN_DIGITS_FALLBACK: usize = 10;
 
     fn parse_filename(filename: &str) -> Result<(String, String), String> {
         let (filename_no_ext, _) = filename.rsplit_once('.').unwrap_or((filename, ""));
@@ -233,7 +235,14 @@ impl FileOrganizer {
                 token.len() >= Self::TWEET_ID_MIN_DIGITS
                     && token.chars().all(|c| c.is_ascii_digit())
             })
-            .ok_or_else(|| "未找到 Tweet ID（需要 >= 16 位的纯数字）".to_string())?;
+            // Fallback: accept >= 10 digits for historical short tweet IDs
+            .or_else(|| {
+                tokens.iter().position(|token| {
+                    token.len() >= Self::TWEET_ID_MIN_DIGITS_FALLBACK
+                        && token.chars().all(|c| c.is_ascii_digit())
+                })
+            })
+            .ok_or_else(|| "未找到 Tweet ID（需要 >= 10 位的纯数字）".to_string())?;
 
         if tweet_id_index == 0 {
             return Err("Tweet ID 在文件名开头，无法确定用户名".to_string());

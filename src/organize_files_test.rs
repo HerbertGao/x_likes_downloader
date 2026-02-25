@@ -53,8 +53,24 @@ fn test_parse_filename_username_with_underscore() {
 }
 
 #[test]
+fn test_parse_filename_historical_short_tweet_id() {
+    // Historical tweet IDs (10-15 digits) should be accepted
+    let (user, id) = FileOrganizer::parse_filename("username_1234567890_photo.jpg").unwrap();
+    assert_eq!(user, "username");
+    assert_eq!(id, "1234567890");
+}
+
+#[test]
+fn test_parse_filename_short_tweet_id_with_cdn() {
+    // Short tweet ID should be preferred over CDN short number
+    let (user, id) = FileOrganizer::parse_filename("user_1234567890_8_cdn.jpg").unwrap();
+    assert_eq!(user, "user");
+    assert_eq!(id, "1234567890");
+}
+
+#[test]
 fn test_parse_filename_no_valid_tweet_id() {
-    // No token >= 16 digits — should fail
+    // No token >= 10 digits — should fail
     assert!(FileOrganizer::parse_filename("user_123_photo.jpg").is_err());
 }
 
