@@ -167,6 +167,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: release-*
+          path: dist
           merge-multiple: true
 
       - name: 上传到 Release
