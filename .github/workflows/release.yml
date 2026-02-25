@@ -180,7 +180,7 @@ jobs:
     name: 发布总结
     needs: [create-release, upload-to-release]
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && needs.create-release.result != 'skipped'
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
