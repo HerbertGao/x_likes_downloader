@@ -62,9 +62,9 @@ update_readme_version() {
     local new_version=$1
     if [ -f "README.md" ]; then
         if [[ "$OSTYPE" == "darwin"* ]]; then
-            sed -i '' "s/版本.*[0-9]\+\.[0-9]\+\.[0-9]\+/版本 ${new_version}/g" README.md
+            sed -i '' -E "s/版本.*[0-9]+\.[0-9]+\.[0-9]+/版本 ${new_version}/g" README.md
         else
-            sed -i "s/版本.*[0-9]\+\.[0-9]\+\.[0-9]\+/版本 ${new_version}/g" README.md
+            sed -i -E "s/版本.*[0-9]+\.[0-9]+\.[0-9]+/版本 ${new_version}/g" README.md
         fi
         print_success "已更新 README.md"
     fi

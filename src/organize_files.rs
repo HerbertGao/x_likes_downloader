@@ -156,7 +156,10 @@ impl FileOrganizer {
 
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => return HashMap::new(),
+            Err(e) => {
+                eprintln!("警告: 无法读取别名文件 {}: {}", alias_file_path, e);
+                return HashMap::new();
+            }
         };
 
         // 移除 UTF-8 BOM（如果存在）
