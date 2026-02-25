@@ -31,6 +31,13 @@ impl FileOrganizer {
             }
         }
 
+        // 加载用户名别名映射
+        let alias_file = a_path.join("username_aliases.txt");
+        let aliases = Self::load_username_aliases(&alias_file.to_string_lossy());
+        if !aliases.is_empty() {
+            println!("已加载 {} 条用户名别名映射", aliases.len());
+        }
+
         // 统计变量
         let mut moved_count = 0;
         let mut skipped_count = 0;
@@ -51,12 +58,17 @@ impl FileOrganizer {
                 
                 match parse_result {
                     Ok((username, tweet_id)) => {
+                        // 别名查询：若 username 在别名表中，替换为主名称
+                        let match_username = aliases.get(&username)
+                            .cloned()
+                            .unwrap_or_else(|| username.clone());
+
                         // 查找对应的目标文件夹
                         let mut target_folder = None;
                         for (folder_prefix, folder_path) in &b_folders {
-                            if username == *folder_prefix 
-                                || username.starts_with(&format!("{}_", folder_prefix))
-                                || folder_prefix.starts_with(&format!("{}_", username)) {
+                            if match_username == *folder_prefix
+                                || match_username.starts_with(&format!("{}_", folder_prefix))
+                                || folder_prefix.starts_with(&format!("{}_", match_username)) {
                                 target_folder = Some(folder_path);
                                 break;
                             }
@@ -93,7 +105,11 @@ impl FileOrganizer {
                                 }
                             }
                         } else {
-                            println!("未找到用户名为 {} 的目标文件夹，跳过 {}", username, filename);
+                            if match_username != username {
+                                println!("未找到用户名为 {}（别名 {} 的主名称）的目标文件夹，跳过 {}", match_username, username, filename);
+                            } else {
+                                println!("未找到用户名为 {} 的目标文件夹，跳过 {}", username, filename);
+                            }
                             skipped_count += 1;
                         }
                     }
@@ -113,6 +129,38 @@ impl FileOrganizer {
         println!("处理错误: {}", error_count);
 
         Ok(())
+    }
+
+    fn load_username_aliases(alias_file_path: &str) -> HashMap<String, String> {
+        let path = Path::new(alias_file_path);
+        if !path.exists() {
+            return HashMap::new();
+        }
+
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return HashMap::new(),
+        };
+
+        let mut aliases = HashMap::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let usernames: Vec<&str> = line.split(',').map(|s| s.trim()).collect();
+            if usernames.len() < 2 {
+                continue;
+            }
+            let primary = usernames[0].to_string();
+            for alias in &usernames[1..] {
+                if !alias.is_empty() {
+                    aliases.insert(alias.to_string(), primary.clone());
+                }
+            }
+        }
+
+        aliases
     }
 
     fn parse_filename(filename: &str) -> Result<(String, String), String> {
