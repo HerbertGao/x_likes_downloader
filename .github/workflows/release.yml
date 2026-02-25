@@ -56,8 +56,8 @@ jobs:
           prerelease: false
           generate_release_notes: true
 
-  build-and-upload:
-    name: 构建并上传 ${{ matrix.platform }}
+  build:
+    name: 构建 ${{ matrix.platform }}
     needs: [quality-checks, create-release]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
@@ -134,7 +134,6 @@ jobs:
       - name: 准备产物
         shell: bash
         run: |
-          VERSION=${{ needs.create-release.outputs.version }}
           mkdir -p dist
 
           # 确定源文件路径
@@ -152,12 +151,6 @@ jobs:
           cp "$SRC" "dist/${{ matrix.artifact_name }}"
           ls -la dist/
 
-      - name: 上传到 Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.create-release.outputs.version }}
-          files: dist/*
-
       - name: 上传工作流产物
         uses: actions/upload-artifact@v4
         with:
@@ -165,9 +158,27 @@ jobs:
           path: dist/*
           retention-days: 90
 
+  upload-to-release:
+    name: 上传产物到 Release
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: 上传到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.create-release.outputs.version }}
+          files: dist/*
+
   release-summary:
     name: 发布总结
-    needs: [create-release, build-and-upload]
+    needs: [create-release, upload-to-release]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -175,7 +186,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: 更新 Release 说明
-        if: needs.build-and-upload.result == 'success'
+        if: needs.upload-to-release.result == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -214,7 +225,7 @@ jobs:
       - name: 检查发布状态
         run: |
           echo "Release: v${{ needs.create-release.outputs.version }}"
-          if [ "${{ needs.build-and-upload.result }}" == "success" ]; then
+          if [ "${{ needs.upload-to-release.result }}" == "success" ]; then
             echo "所有平台构建并上传成功"
             echo ""
             echo "下载地址："

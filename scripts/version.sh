@@ -32,10 +32,10 @@ print_warning() {
 # 切换到项目根目录
 cd "$(dirname "$0")/.."
 
-# 验证 semver 格式
+# 验证版本号格式（支持 X.Y.Z 和 X.Y.Z.B）
 validate_semver() {
     local version=$1
-    if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
         return 1
     fi
     return 0
@@ -75,8 +75,11 @@ calculate_new_version() {
     local current=$1
     local bump_type=$2
 
-    local major minor patch
-    IFS='.' read -r major minor patch <<< "$current"
+    IFS='.' read -ra parts <<< "$current"
+    local major=${parts[0]}
+    local minor=${parts[1]}
+    local patch=${parts[2]}
+    local build=${parts[3]:-0}
 
     case $bump_type in
         major)
@@ -89,8 +92,6 @@ calculate_new_version() {
             echo "${major}.${minor}.$((patch + 1))"
             ;;
         build)
-            # build 版本追加第四位
-            local build=${4:-0}
             echo "${major}.${minor}.${patch}.$((build + 1))"
             ;;
         *)
@@ -205,12 +206,7 @@ main() {
             ;;
         build)
             local current_version=$(get_cargo_version)
-            IFS='.' read -ra parts <<< "$current_version"
-            local major=${parts[0]}
-            local minor=${parts[1]}
-            local patch=${parts[2]}
-            local build=${parts[3]:-0}
-            local new_version="${major}.${minor}.${patch}.$((build + 1))"
+            local new_version=$(calculate_new_version "$current_version" "$command")
             do_version_bump "$current_version" "$new_version"
             ;;
         *)
