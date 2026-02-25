@@ -12,8 +12,7 @@ pub struct XApi {
 
 impl XApi {
     pub fn new(config: Config) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .build()?;
+        let client = reqwest::Client::builder().build()?;
 
         Ok(XApi { client, config })
     }
@@ -44,24 +43,33 @@ impl XApi {
 
             let url = format!(
                 "{}?variables={}&features={}&fieldToggles={}",
-                self.config.likes_api_url, variables_encoded, features_encoded, fieldtoggles_encoded
+                self.config.likes_api_url,
+                variables_encoded,
+                features_encoded,
+                fieldtoggles_encoded
             );
 
             println!("请求 URL: {}", url);
 
             let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert("Authorization", format!("Bearer {}", self.config.bearer_token).parse()?);
-            headers.insert("Cookie", format!("auth_token={}; ct0={}", self.config.auth_token, self.config.ct0).parse()?);
+            headers.insert(
+                "Authorization",
+                format!("Bearer {}", self.config.bearer_token).parse()?,
+            );
+            headers.insert(
+                "Cookie",
+                format!(
+                    "auth_token={}; ct0={}",
+                    self.config.auth_token, self.config.ct0
+                )
+                .parse()?,
+            );
             headers.insert("X-Csrf-Token", self.config.ct0.parse()?);
             headers.insert("User-Agent", self.config.user_agent.parse()?);
 
             println!("请求 headers: {:?}", headers);
 
-            let response = self.client
-                .get(&url)
-                .headers(headers)
-                .send()
-                .await?;
+            let response = self.client.get(&url).headers(headers).send().await?;
 
             if !response.status().is_success() {
                 let status = response.status();
@@ -72,7 +80,11 @@ impl XApi {
             let data: Value = response.json().await?;
 
             let (tweets, new_cursor) = self.parse_likes_response(&data)?;
-            println!("本页获取到 {} 条 tweet，cursor: {:?}", tweets.len(), new_cursor);
+            println!(
+                "本页获取到 {} 条 tweet，cursor: {:?}",
+                tweets.len(),
+                new_cursor
+            );
 
             all_tweets.extend(tweets);
 
@@ -108,9 +120,9 @@ impl XApi {
                 if instruction.get("type") == Some(&json!("TimelineAddEntries")) {
                     if let Some(entries) = instruction.get("entries").and_then(|e| e.as_array()) {
                         for entry in entries {
-                            if let Some(entry_id) = entry.get("entryId").and_then(|id| id.as_str()) {
+                            if let Some(entry_id) = entry.get("entryId").and_then(|id| id.as_str())
+                            {
                                 if entry_id.starts_with("tweet-") {
-
                                     tweets.push(entry.clone());
                                 } else if entry_id.starts_with("cursor-bottom-") {
                                     new_cursor = entry
@@ -128,4 +140,4 @@ impl XApi {
 
         Ok((tweets, new_cursor))
     }
-} 
+}

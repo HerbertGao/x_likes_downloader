@@ -1,20 +1,45 @@
 schema: spec-driven
 
-# 项目上下文（可选）
-# 在创建工件时向 AI 显示此信息。
-# 添加您的技术栈、约定、风格指南、领域知识等。
-# 示例：
-#   context: |
-#     技术栈：TypeScript, React, Node.js
-#     我们使用约定式提交
-#     领域：电商平台
+context: |
+  技术栈：Rust 2021 edition, tokio, reqwest, clap, serde, anyhow
+  领域：X/Twitter 点赞媒体下载 CLI 工具
+  用户通过 X GraphQL API 获取点赞推文，并下载其中的图片和视频
 
-# 每个工件的规则（可选）
-# 为特定工件添加自定义规则。
-# 示例：
-#   rules:
-#     proposal:
-#       - 保持提案在500字以内
-#       - 始终包含"非目标"部分
-#     tasks:
-#       - 将任务分解为最多2小时的块
+  项目约定：
+  - 文档和用户面输出使用中文
+  - 代码注释和变量命名使用英文（Rust 标准 snake_case）
+  - 提交信息使用中文 + 约定式提交格式（如 feat:, fix:, docs:, chore:）
+  - 错误处理使用 anyhow::Result，配合 .with_context() 提供上下文
+  - 异步优先：所有 I/O 操作使用 async/await（tokio 运行时）
+  - 配置层级：.env > 环境变量 > data/private_tokens.env > 代码默认值
+
+  核心模块：
+  - main.rs: CLI 入口，命令路由（clap derive）
+  - config.rs: 配置加载与管理
+  - x_api.rs: X GraphQL API 客户端，游标分页
+  - downloader.rs: 媒体下载引擎，断点续传，进度显示
+  - setup.rs: 从 cURL 命令解析认证令牌
+  - organize_files.rs: 按用户名整理已下载文件
+  - updater.rs: 通过 GitHub Releases 自更新
+
+  构建与发布：
+  - GitHub Actions 自动构建 6 个平台（macOS/Linux/Windows × x86_64/ARM64）
+  - 语义化版本，scripts/version.sh 管理版本号
+  - 分支策略：dev 开发，master 发布
+
+rules:
+  proposal:
+    - 用中文编写提案内容
+    - 明确说明变更涉及的核心模块（x_api/downloader/config 等）
+    - 如涉及 X API 交互变更，需说明对 GraphQL 请求参数或响应解析的影响
+    - 关注向后兼容性，特别是配置项和文件格式的变更
+  tasks:
+    - 按模块分组任务（如 API 层、下载层、配置层、CLI 层）
+    - 每个任务标注受影响的源文件路径
+    - 当前项目无自动化测试，任务中应包含手动验证步骤
+    - 涉及多平台的变更需考虑跨平台兼容性（macOS/Linux/Windows）
+  design:
+    - 遵循项目现有模式：模块化单文件、anyhow 错误处理、tokio 异步
+    - 避免引入新框架或重量级依赖，除非有充分理由
+    - API 相关设计需考虑 X API 的速率限制和认证机制
+    - 文件操作设计需考虑大批量下载场景的内存和磁盘使用

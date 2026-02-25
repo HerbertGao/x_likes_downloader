@@ -1,4 +1,6 @@
 use anyhow::{Context, Result};
+use chrono::DateTime;
+use filetime::{set_file_times, FileTime};
 use futures_util::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use reqwest::Client;
@@ -10,8 +12,6 @@ use std::time::Duration;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
-use chrono::DateTime;
-use filetime::{FileTime, set_file_times};
 
 use crate::config::Config;
 
@@ -23,8 +23,7 @@ pub struct Downloader {
 
 impl Downloader {
     pub fn new(config: Config) -> Result<Self> {
-        let client_builder = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30));
+        let client_builder = reqwest::Client::builder().timeout(Duration::from_secs(30));
 
         let client = client_builder.build()?;
         let downloaded_ids = Self::load_downloaded_ids(&config.download_record)?;
@@ -41,8 +40,8 @@ impl Downloader {
             return Ok(HashSet::new());
         }
 
-        let content = fs::read_to_string(filename)
-            .with_context(|| format!("无法读取文件: {}", filename))?;
+        let content =
+            fs::read_to_string(filename).with_context(|| format!("无法读取文件: {}", filename))?;
 
         Ok(content.lines().map(|s| s.trim().to_string()).collect())
     }
@@ -71,7 +70,11 @@ impl Downloader {
         self.downloaded_ids.len()
     }
 
-    pub async fn call_media_downloader(&self, tweet: &Value, tweet_id: &str) -> Result<Option<bool>> {
+    pub async fn call_media_downloader(
+        &self,
+        tweet: &Value,
+        tweet_id: &str,
+    ) -> Result<Option<bool>> {
         // 从 tweet 对象中抽取推文主体
         let tweet_obj = self.extract_tweet_object(tweet)?;
         if tweet_obj.is_none() {
@@ -80,19 +83,21 @@ impl Downloader {
         let tweet_obj = tweet_obj.unwrap();
 
         // 提取推文发布时间
-        let tweet_timestamp = self.extract_tweet_timestamp(&tweet_obj)?;
+        let tweet_timestamp = self.extract_tweet_timestamp(tweet_obj)?;
 
         // 提取作者用户名
-        let username = self.extract_username(&tweet_obj)?;
+        let username = self.extract_username(tweet_obj)?;
 
         // 提取媒体列表
-        let media_urls = self.extract_media_urls(&tweet_obj)?;
+        let media_urls = self.extract_media_urls(tweet_obj)?;
         if media_urls.is_empty() {
             return Ok(None);
         }
 
         // 构建文件名前缀
-        let prefix = self.config.file_format
+        let prefix = self
+            .config
+            .file_format
             .replace("{USERNAME}", &username.unwrap_or_default())
             .replace("{ID}", tweet_id)
             .replace(" ", "_");
@@ -106,10 +111,11 @@ impl Downloader {
 
         for (i, media_url) in media_urls.iter().enumerate() {
             let parsed_url = Url::parse(media_url)?;
-            let original_name = parsed_url.path_segments()
-                .and_then(|segments| segments.last())
+            let original_name = parsed_url
+                .path_segments()
+                .and_then(|mut segments| segments.next_back())
                 .unwrap_or("unknown");
-            
+
             let filename = format!("{}_{}", prefix, original_name);
             let out_path = output_dir.join(&filename);
 
@@ -117,19 +123,31 @@ impl Downloader {
             if out_path.exists() {
                 let metadata = fs::metadata(&out_path)?;
                 if metadata.len() > 0 {
-                    println!("跳过已存在的文件 ({}/{}): {:?} (大小: {} 字节)", 
-                        i + 1, total_media_count, out_path, metadata.len());
+                    println!(
+                        "跳过已存在的文件 ({}/{}): {:?} (大小: {} 字节)",
+                        i + 1,
+                        total_media_count,
+                        out_path,
+                        metadata.len()
+                    );
                     skipped_count += 1;
                     download_success_count += 1;
                     continue;
                 } else {
-                    println!("发现损坏的空文件，将重新下载 ({}/{}): {:?}", 
-                        i + 1, total_media_count, out_path);
+                    println!(
+                        "发现损坏的空文件，将重新下载 ({}/{}): {:?}",
+                        i + 1,
+                        total_media_count,
+                        out_path
+                    );
                     fs::remove_file(&out_path)?;
                 }
             }
 
-            match self.download_media(media_url, &out_path, i + 1, total_media_count).await {
+            match self
+                .download_media(media_url, &out_path, i + 1, total_media_count)
+                .await
+            {
                 Ok(true) => {
                     // 下载成功后设置文件时间为推文发布时间
                     if let Some(ts) = tweet_timestamp {
@@ -144,18 +162,30 @@ impl Downloader {
                     // 下载失败，继续下一个
                 }
                 Err(e) => {
-                    println!("下载异常 ({}/{}): {} 错误: {}", i + 1, total_media_count, media_url, e);
+                    println!(
+                        "下载异常 ({}/{}): {} 错误: {}",
+                        i + 1,
+                        total_media_count,
+                        media_url,
+                        e
+                    );
                 }
             }
         }
 
         if download_success_count > 0 {
             if skipped_count > 0 {
-                println!("Tweet {} 处理完成: 跳过 {} 个已存在文件，成功下载 {} 个新文件", 
-                    tweet_id, skipped_count, download_success_count - skipped_count);
+                println!(
+                    "Tweet {} 处理完成: 跳过 {} 个已存在文件，成功下载 {} 个新文件",
+                    tweet_id,
+                    skipped_count,
+                    download_success_count - skipped_count
+                );
             } else {
-                println!("Tweet {} 成功下载了 {}/{} 个媒体文件", 
-                    tweet_id, download_success_count, total_media_count);
+                println!(
+                    "Tweet {} 成功下载了 {}/{} 个媒体文件",
+                    tweet_id, download_success_count, total_media_count
+                );
             }
             Ok(Some(true))
         } else {
@@ -201,7 +231,7 @@ impl Downloader {
         let mut media_urls = Vec::new();
 
         let legacy = tweet_obj.get("legacy").unwrap_or(&Value::Null);
-        
+
         // 从 extended_entities 或 entities 中提取媒体列表
         let media_list = legacy
             .get("extended_entities")
@@ -217,16 +247,20 @@ impl Downloader {
         if let Some(media_array) = media_list {
             for media in media_array {
                 let media_type = media.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                
+
                 match media_type {
                     "video" => {
                         if let Some(video_info) = media.get("video_info") {
-                            if let Some(variants) = video_info.get("variants").and_then(|v| v.as_array()) {
+                            if let Some(variants) =
+                                video_info.get("variants").and_then(|v| v.as_array())
+                            {
                                 let best_variant = variants
                                     .iter()
                                     .filter(|v| v.get("bitrate").is_some())
-                                    .max_by_key(|v| v.get("bitrate").and_then(|b| b.as_u64()).unwrap_or(0));
-                                
+                                    .max_by_key(|v| {
+                                        v.get("bitrate").and_then(|b| b.as_u64()).unwrap_or(0)
+                                    });
+
                                 if let Some(variant) = best_variant {
                                     if let Some(url) = variant.get("url").and_then(|u| u.as_str()) {
                                         media_urls.push(url.to_string());
@@ -271,18 +305,26 @@ impl Downloader {
         Ok(None)
     }
 
-    async fn download_media(&self, url: &str, out_path: &Path, current: usize, total: usize) -> Result<bool> {
+    async fn download_media(
+        &self,
+        url: &str,
+        out_path: &Path,
+        current: usize,
+        total: usize,
+    ) -> Result<bool> {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert("User-Agent", self.config.user_agent.parse()?);
 
-        let response = self.client
-            .get(url)
-            .headers(headers)
-            .send()
-            .await?;
+        let response = self.client.get(url).headers(headers).send().await?;
 
         if !response.status().is_success() {
-            println!("下载失败 ({}) ({}/{}): {}", response.status(), current, total, url);
+            println!(
+                "下载失败 ({}) ({}/{}): {}",
+                response.status(),
+                current,
+                total,
+                url
+            );
             return Ok(false);
         }
 
@@ -311,15 +353,19 @@ impl Downloader {
         // 验证下载完整性
         if let Some(expected_size) = content_length {
             if downloaded_size != expected_size {
-                println!("下载不完整 ({}/{}): {:?} (期望: {}, 实际: {})", 
-                    current, total, out_path, expected_size, downloaded_size);
+                println!(
+                    "下载不完整 ({}/{}): {:?} (期望: {}, 实际: {})",
+                    current, total, out_path, expected_size, downloaded_size
+                );
                 fs::remove_file(out_path)?;
                 return Ok(false);
             }
         }
 
-        println!("下载成功 ({}/{}): {:?} (大小: {} 字节)", 
-            current, total, out_path, downloaded_size);
+        println!(
+            "下载成功 ({}/{}): {:?} (大小: {} 字节)",
+            current, total, out_path, downloaded_size
+        );
         Ok(true)
     }
-} 
+}

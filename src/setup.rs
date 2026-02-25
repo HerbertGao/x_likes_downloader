@@ -91,8 +91,7 @@ fn parse_curl_command(curl_command: &str) -> Result<ParsedCurl> {
         return Err(anyhow::anyhow!("无法找到cookie参数"));
     };
 
-    let bearer_token = bearer_token
-        .ok_or_else(|| anyhow::anyhow!("无法解析Bearer Token"))?;
+    let bearer_token = bearer_token.ok_or_else(|| anyhow::anyhow!("无法解析Bearer Token"))?;
 
     Ok(ParsedCurl {
         bearer_token,
@@ -114,8 +113,6 @@ fn parse_cookies(cookie_str: &str) -> Result<ParsedCookies> {
         }
     }
 
-
-
     let required_keys = ["twid", "auth_token", "ct0", "personalization_id"];
     let mut result = ParsedCookies {
         twid: String::new(),
@@ -132,8 +129,8 @@ fn parse_cookies(cookie_str: &str) -> Result<ParsedCookies> {
         // 直接使用原始值，不进行URL解码
         match *key {
             "twid" => {
-                result.twid = if value.starts_with("u=") {
-                    value[2..].to_string()
+                result.twid = if let Some(stripped) = value.strip_prefix("u=") {
+                    stripped.to_string()
                 } else {
                     value.to_string()
                 };
@@ -141,7 +138,6 @@ fn parse_cookies(cookie_str: &str) -> Result<ParsedCookies> {
                 if result.twid.starts_with("u%3D") {
                     result.twid = result.twid[4..].to_string();
                 }
-
             }
             "auth_token" => result.auth_token = value.to_string(),
             "ct0" => result.ct0 = value.to_string(),
@@ -153,6 +149,7 @@ fn parse_cookies(cookie_str: &str) -> Result<ParsedCookies> {
     Ok(result)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn save_private_tokens(
     user_id: &str,
     bearer_token: &str,
@@ -177,4 +174,4 @@ fn save_private_tokens(
     fs::write(filename, content)?;
     println!("生成 {} 成功！", filename);
     Ok(())
-} 
+}

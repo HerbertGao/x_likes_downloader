@@ -79,11 +79,14 @@ impl Config {
 
     fn load_private_tokens(filename: &str) -> Result<HashMap<String, String>> {
         if !Path::new(filename).exists() {
-            return Err(anyhow::anyhow!("{} 不存在，请先运行 setup 命令初始化。", filename));
+            return Err(anyhow::anyhow!(
+                "{} 不存在，请先运行 setup 命令初始化。",
+                filename
+            ));
         }
 
-        let content = fs::read_to_string(filename)
-            .with_context(|| format!("无法读取文件: {}", filename))?;
+        let content =
+            fs::read_to_string(filename).with_context(|| format!("无法读取文件: {}", filename))?;
 
         let mut tokens = HashMap::new();
         for line in content.lines() {
@@ -94,4 +97,4 @@ impl Config {
 
         Ok(tokens)
     }
-} 
+}

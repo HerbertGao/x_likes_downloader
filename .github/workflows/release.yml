@@ -1,133 +1,237 @@
-name: Build and Release
+name: Release
 
 on:
+  # Tag 推送时触发（格式：v*）
   push:
     tags:
       - 'v*'
+
+  # 手动触发
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
+  quality-checks:
+    name: Quality Checks
+    uses: ./.github/workflows/reusable-quality-checks.yml
+
+  create-release:
+    name: 创建 Release
+    needs: [quality-checks]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 获取版本号
+        id: get_version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: 创建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: x_likes_downloader v${{ steps.get_version.outputs.version }}
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+
   build:
+    name: 构建 ${{ matrix.platform }}
+    needs: [quality-checks, create-release]
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - platform: linux-x86_64
+            os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: x_likes_downloader_linux_x86_64
-          - os: ubuntu-latest
+
+          - platform: linux-arm64
+            os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             artifact_name: x_likes_downloader_linux_arm64
-          - os: windows-latest
+
+          - platform: windows-x86_64
+            os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: x_likes_downloader_windows_x86_64.exe
-          - os: windows-latest
+
+          - platform: windows-arm64
+            os: windows-latest
             target: aarch64-pc-windows-msvc
             artifact_name: x_likes_downloader_windows_arm64.exe
-          - os: macos-latest
+
+          - platform: macos-x86_64
+            os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: x_likes_downloader_macos_x86_64
-          - os: macos-latest
+
+          - platform: macos-arm64
+            os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: x_likes_downloader_macos_arm64
 
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Setup Rust toolchain
+      - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross-compilation dependencies (Linux ARM64)
+      - name: Rust 缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: 安装交叉编译依赖 (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-          sudo apt-get install -y libc6-dev-arm64-cross
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
 
-      - name: Build release (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: 构建
+        shell: bash
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-            cargo build --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
           fi
+          cargo build --release --target ${{ matrix.target }}
 
-      - name: Build release (Windows)
-        if: matrix.os == 'windows-latest'
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Build release (macOS)
-        if: matrix.os == 'macos-latest'
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Rename binary for platform (Linux)
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
-            cp target/${{ matrix.target }}/release/x_likes_downloader x_likes_downloader_linux_x86_64
-          elif [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            cp target/${{ matrix.target }}/release/x_likes_downloader x_likes_downloader_linux_arm64
-          fi
-
-      - name: Rename binary for platform (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: 准备产物
         shell: bash
         run: |
-          if [ "${{ matrix.target }}" = "x86_64-pc-windows-msvc" ]; then
-            cp target/${{ matrix.target }}/release/x_likes_downloader.exe x_likes_downloader_windows_x86_64.exe
-          elif [ "${{ matrix.target }}" = "aarch64-pc-windows-msvc" ]; then
-            cp target/${{ matrix.target }}/release/x_likes_downloader.exe x_likes_downloader_windows_arm64.exe
+          mkdir -p dist
+
+          # 确定源文件路径
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            SRC="target/${{ matrix.target }}/release/x_likes_downloader.exe"
+          else
+            SRC="target/${{ matrix.target }}/release/x_likes_downloader"
           fi
 
-      - name: Rename binary for platform (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          if [ "${{ matrix.target }}" = "x86_64-apple-darwin" ]; then
-            cp target/${{ matrix.target }}/release/x_likes_downloader x_likes_downloader_macos_x86_64
-          elif [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then
-            cp target/${{ matrix.target }}/release/x_likes_downloader x_likes_downloader_macos_arm64
+          if [ ! -f "$SRC" ]; then
+            echo "错误：未找到构建产物: $SRC"
+            exit 1
           fi
 
-      - name: Upload artifact
+          cp "$SRC" "dist/${{ matrix.artifact_name }}"
+          ls -la dist/
+
+      - name: 上传工作流产物
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: x_likes_downloader_*
+          name: release-${{ matrix.platform }}
+          path: dist/*
+          retention-days: 90
 
-  create-release:
-    needs: build
+  upload-to-release:
+    name: 上传产物到 Release
+    needs: [create-release, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    permissions:
-      contents: write
-      packages: write
-    
     steps:
-      - name: Download all artifacts
+      - name: 下载所有构建产物
         uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
 
-      - name: Create release
+      - name: 上传到 Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            x_likes_downloader_linux_x86_64/x_likes_downloader_linux_x86_64
-            x_likes_downloader_linux_arm64/x_likes_downloader_linux_arm64
-            x_likes_downloader_windows_x86_64.exe/x_likes_downloader_windows_x86_64.exe
-            x_likes_downloader_windows_arm64.exe/x_likes_downloader_windows_arm64.exe
-            x_likes_downloader_macos_x86_64/x_likes_downloader_macos_x86_64
-            x_likes_downloader_macos_arm64/x_likes_downloader_macos_arm64
+          tag_name: v${{ needs.create-release.outputs.version }}
+          files: dist/*
           draft: false
-          prerelease: false
-          generate_release_notes: true
-          fail_on_unmatched_files: false
+
+  release-summary:
+    name: 发布总结
+    needs: [create-release, upload-to-release]
+    runs-on: ubuntu-latest
+    if: always() && needs.create-release.result != 'skipped'
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 更新 Release 说明
+        if: needs.upload-to-release.result == 'success'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ needs.create-release.outputs.version }}
+          REPO=${{ github.repository }}
+          BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
+
+          # 生成下载表格
+          DOWNLOAD_TABLE=$(cat << 'EOF'
+          ## 下载
+
+          | 架构 | Linux | macOS | Windows |
+          |------|-------|-------|---------|
+          | x86_64 (Intel) | [下载](BASE_URL/x_likes_downloader_linux_x86_64) | [下载](BASE_URL/x_likes_downloader_macos_x86_64) | [下载](BASE_URL/x_likes_downloader_windows_x86_64.exe) |
+          | ARM64 | [下载](BASE_URL/x_likes_downloader_linux_arm64) | [下载](BASE_URL/x_likes_downloader_macos_arm64) | [下载](BASE_URL/x_likes_downloader_windows_arm64.exe) |
+
+          EOF
+          )
+
+          # 替换占位符
+          DOWNLOAD_TABLE="${DOWNLOAD_TABLE//BASE_URL/$BASE_URL}"
+
+          # 获取当前 Release body
+          CURRENT_BODY=$(gh release view "v${VERSION}" --json body -q '.body')
+
+          # 组合新的 Release body
+          NEW_BODY="${DOWNLOAD_TABLE}
+
+          ## 更新日志
+
+          ${CURRENT_BODY}"
+
+          # 更新 Release (使用 --notes-file - 从 stdin 读取以避免 shell 转义问题)
+          echo "$NEW_BODY" | gh release edit "v${VERSION}" --notes-file -
+
+      - name: 检查发布状态
+        run: |
+          echo "Release: v${{ needs.create-release.outputs.version }}"
+          if [ "${{ needs.upload-to-release.result }}" == "success" ]; then
+            echo "所有平台构建并上传成功"
+            echo ""
+            echo "下载地址："
+            echo "https://github.com/${{ github.repository }}/releases/tag/v${{ needs.create-release.outputs.version }}"
+            exit 0
+          else
+            echo "部分平台构建失败"
+            exit 1
+          fi
