@@ -215,6 +215,11 @@ impl FileOrganizer {
         aliases
     }
 
+    /// Tweet ID minimum digits (Twitter Snowflake ID: 18-19 digits, username max: 15 chars)
+    const TWEET_ID_MIN_DIGITS: usize = 16;
+    /// Fallback minimum for historical short tweet IDs (pre-2010 Twitter IDs)
+    const TWEET_ID_MIN_DIGITS_FALLBACK: usize = 10;
+
     fn parse_filename(filename: &str) -> Result<(String, String), String> {
         let (filename_no_ext, _) = filename.rsplit_once('.').unwrap_or((filename, ""));
         let tokens: Vec<&str> = filename_no_ext.split('_').collect();
@@ -223,41 +228,29 @@ impl FileOrganizer {
             return Err("文件名格式错误：至少需要3个部分 (a_b_c)".to_string());
         }
 
-        // 找出所有纯数字的部分
-        let numeric_indices: Vec<usize> = tokens
+        // Find the first token with >= 16 pure ASCII digits as Tweet ID
+        let tweet_id_index = tokens
             .iter()
-            .enumerate()
-            .filter(|(_, token)| token.chars().all(|c| c.is_ascii_digit()))
-            .map(|(i, _)| i)
-            .collect();
+            .position(|token| {
+                token.len() >= Self::TWEET_ID_MIN_DIGITS
+                    && token.chars().all(|c| c.is_ascii_digit())
+            })
+            // Fallback: accept >= 10 digits for historical short tweet IDs
+            // Use last match to avoid misclassifying numeric username sub-tokens
+            .or_else(|| {
+                tokens.iter().rposition(|token| {
+                    token.len() >= Self::TWEET_ID_MIN_DIGITS_FALLBACK
+                        && token.chars().all(|c| c.is_ascii_digit())
+                })
+            })
+            .ok_or_else(|| "未找到 Tweet ID（需要 >= 10 位的纯数字）".to_string())?;
 
-        if numeric_indices.is_empty() {
-            return Err("未找到数字ID部分".to_string());
+        if tweet_id_index == 0 {
+            return Err("Tweet ID 在文件名开头，无法确定用户名".to_string());
         }
 
-        // 选择最后一个数字作为Tweet ID
-        let last_num_index = *numeric_indices.iter().max().unwrap();
-        let tweet_id = tokens[last_num_index];
-
-        // 根据最后一个数字的位置确定用户名和原始文件名
-        let username = if last_num_index == 0 {
-            // 格式：数字_用户名_原始文件名
-            if tokens.len() >= 3 {
-                tokens[1].to_string()
-            } else {
-                return Err("最后一个数字在开头但后面部分不足".to_string());
-            }
-        } else if last_num_index == tokens.len() - 1 {
-            // 格式：用户名_原始文件名_数字
-            if tokens.len() >= 3 {
-                tokens[..last_num_index].join("_")
-            } else {
-                return Err("最后一个数字在结尾但前面部分不足".to_string());
-            }
-        } else {
-            // 标准格式：用户名_数字_原始文件名
-            tokens[..last_num_index].join("_")
-        };
+        let tweet_id = tokens[tweet_id_index];
+        let username = tokens[..tweet_id_index].join("_");
 
         Ok((username, tweet_id.to_string()))
     }
@@ -280,3 +273,7 @@ impl FileOrganizer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "organize_files_test.rs"]
+mod tests;
