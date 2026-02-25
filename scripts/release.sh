@@ -135,7 +135,7 @@ run_build_check() {
 # 检查标签是否存在
 check_tag_exists() {
     local tag=$1
-    if git tag -l | grep -q "^${tag}$"; then
+    if git rev-parse "refs/tags/$tag" > /dev/null 2>&1; then
         return 0
     fi
     return 1
@@ -208,8 +208,8 @@ push_to_remote() {
 
     print_info "推送到远程..."
     local current_branch=$(git branch --show-current)
-    git push "$remote" "$current_branch" > /dev/null 2>&1
-    git push "$remote" "$tag" > /dev/null 2>&1
+    git push "$remote" "$current_branch"
+    git push "$remote" "$tag"
     print_success "已推送到远程"
 
     echo ""
