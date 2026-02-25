@@ -1,0 +1,118 @@
+name: Build
+
+on:
+  # PR 到 master 分支时触发
+  pull_request:
+    branches: [master]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'openspec/**'
+
+  # 手动触发
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_BACKTRACE: 1
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality-checks:
+    name: Quality Checks
+    uses: ./.github/workflows/reusable-quality-checks.yml
+
+  build:
+    name: 构建 ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+
+          - platform: linux-arm64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+
+          - platform: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+          - platform: windows-arm64
+            os: windows-latest
+            target: aarch64-pc-windows-msvc
+
+          - platform: macos-x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+
+          - platform: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust 缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+
+      - name: 安装交叉编译依赖 (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+
+      - name: 构建
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          fi
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-build
+          path: target/${{ matrix.target }}/release/x_likes_downloader*
+          retention-days: 90
+
+  build-summary:
+    name: 构建总结
+    needs: [build, quality-checks]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: 检查构建状态
+        run: |
+          if [ "${{ needs.build.result }}" == "success" ] && [ "${{ needs.quality-checks.result }}" == "success" ]; then
+            echo "构建与检查全部成功"
+            exit 0
+          else
+            echo "构建或检查存在失败"
+            echo "build: ${{ needs.build.result }}"
+            echo "quality-checks: ${{ needs.quality-checks.result }}"
+            exit 1
+          fi
