@@ -52,7 +52,7 @@ jobs:
         with:
           tag_name: v${{ steps.get_version.outputs.version }}
           name: x_likes_downloader v${{ steps.get_version.outputs.version }}
-          draft: false
+          draft: true
           prerelease: false
           generate_release_notes: true
 
@@ -175,6 +175,7 @@ jobs:
         with:
           tag_name: v${{ needs.create-release.outputs.version }}
           files: dist/*
+          draft: false
 
   release-summary:
     name: 发布总结

@@ -68,6 +68,7 @@ impl FileOrganizer {
                             .get(&username)
                             .cloned()
                             .unwrap_or_else(|| username.clone());
+                        let is_alias = match_username != username;
 
                         // 查找对应的目标文件夹
                         // 优先精确匹配，然后再尝试前缀匹配
@@ -76,8 +77,9 @@ impl FileOrganizer {
                         // 首先尝试精确匹配
                         if let Some(folder_path) = b_folders.get(&match_username) {
                             target_folder = Some(folder_path);
-                        } else {
-                            // 如果没有精确匹配，再尝试前缀匹配
+                        } else if !is_alias {
+                            // 只有在不是别名映射时才进行前缀匹配
+                            // 如果是别名映射，必须精确匹配主名称文件夹
                             for (folder_prefix, folder_path) in &b_folders {
                                 if match_username.starts_with(&format!("{}_", folder_prefix))
                                     || folder_prefix.starts_with(&format!("{}_", match_username))
