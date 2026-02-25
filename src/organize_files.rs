@@ -70,14 +70,21 @@ impl FileOrganizer {
                             .unwrap_or_else(|| username.clone());
 
                         // 查找对应的目标文件夹
+                        // 优先精确匹配，然后再尝试前缀匹配
                         let mut target_folder = None;
-                        for (folder_prefix, folder_path) in &b_folders {
-                            if match_username == *folder_prefix
-                                || match_username.starts_with(&format!("{}_", folder_prefix))
-                                || folder_prefix.starts_with(&format!("{}_", match_username))
-                            {
-                                target_folder = Some(folder_path);
-                                break;
+
+                        // 首先尝试精确匹配
+                        if let Some(folder_path) = b_folders.get(&match_username) {
+                            target_folder = Some(folder_path);
+                        } else {
+                            // 如果没有精确匹配，再尝试前缀匹配
+                            for (folder_prefix, folder_path) in &b_folders {
+                                if match_username.starts_with(&format!("{}_", folder_prefix))
+                                    || folder_prefix.starts_with(&format!("{}_", match_username))
+                                {
+                                    target_folder = Some(folder_path);
+                                    break;
+                                }
                             }
                         }
 
