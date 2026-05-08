@@ -81,13 +81,17 @@ pub async fn auth_status() -> AuthStatus {
             return AuthStatus::EndpointStale;
         }
     };
-    if body
+    // X 当前 schema 把外层 timeline 节点叫 `timeline`；旧 schema 叫 `timeline_v2`。
+    // 两个字段名都接受：任一存在即视为 schema 正常。
+    let result_node = body
         .get("data")
         .and_then(|d| d.get("user"))
-        .and_then(|u| u.get("result"))
+        .and_then(|u| u.get("result"));
+    let has_timeline = result_node
         .and_then(|r| r.get("timeline_v2"))
-        .is_none()
-    {
+        .or_else(|| result_node.and_then(|r| r.get("timeline")))
+        .is_some();
+    if !has_timeline {
         return AuthStatus::EndpointStale;
     }
     AuthStatus::Healthy {

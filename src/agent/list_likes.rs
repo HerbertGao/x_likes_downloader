@@ -179,16 +179,25 @@ async fn fetch_one_page(
     Ok(parse_likes_response(&data))
 }
 
+/// 在 `data.user.result` 下找外层 timeline 节点。
+///
+/// X 历史上把它叫 `timeline_v2`（V2 timeline 是 opt-in feature），
+/// 在 V2 timeline 全量普及后字段改名为 `timeline`。两种字段名都要兼容：
+/// 优先 `timeline_v2`（保留对老响应的解析能力），回退 `timeline`（当前默认）。
+fn find_outer_timeline(data: &Value) -> Option<&Value> {
+    let result = data
+        .get("data")
+        .and_then(|d| d.get("user"))
+        .and_then(|u| u.get("result"))?;
+    result.get("timeline_v2").or_else(|| result.get("timeline"))
+}
+
 /// Parse the GraphQL Likes response, returning (tweet entries, next cursor).
 pub(crate) fn parse_likes_response(data: &Value) -> (Vec<Value>, Option<String>) {
     let mut tweets = Vec::new();
     let mut new_cursor = None;
 
-    if let Some(instructions) = data
-        .get("data")
-        .and_then(|d| d.get("user"))
-        .and_then(|u| u.get("result"))
-        .and_then(|r| r.get("timeline_v2"))
+    if let Some(instructions) = find_outer_timeline(data)
         .and_then(|t| t.get("timeline"))
         .and_then(|t| t.get("instructions"))
         .and_then(|i| i.as_array())
@@ -235,23 +244,30 @@ fn entry_to_summary(entry: &Value, include_raw: bool) -> Option<TweetSummary> {
 
     let legacy = tweet_obj.get("legacy").unwrap_or(&Value::Null);
 
-    let user_legacy = tweet_obj
+    // X 在 schema 演进中把 user 的 `screen_name` / `name` 从 `user.legacy` 挪到了 `user.core`。
+    // 两个位置都接受：优先新位置 `core`，回退 `legacy`，再回退顶层（极端兜底）。
+    let user_result = tweet_obj
         .get("core")
         .and_then(|c| c.get("user_results"))
-        .and_then(|ur| ur.get("result"))
-        .and_then(|r| r.get("legacy"));
+        .and_then(|ur| ur.get("result"));
 
-    let author_handle = user_legacy
-        .and_then(|u| u.get("screen_name"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
+    let lookup_user_field = |field: &str| -> String {
+        user_result
+            .and_then(|r| r.get("core"))
+            .and_then(|c| c.get(field))
+            .and_then(|s| s.as_str())
+            .or_else(|| {
+                user_result
+                    .and_then(|r| r.get("legacy"))
+                    .and_then(|l| l.get(field))
+                    .and_then(|s| s.as_str())
+            })
+            .unwrap_or("")
+            .to_string()
+    };
 
-    let author_display_name = user_legacy
-        .and_then(|u| u.get("name"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("")
-        .to_string();
+    let author_handle = lookup_user_field("screen_name");
+    let author_display_name = lookup_user_field("name");
 
     let text = legacy
         .get("full_text")
@@ -619,5 +635,129 @@ mod tests {
             .as_ref()
             .expect("include_raw=true 时应含 all_variants");
         assert_eq!(vars.len(), 2);
+    }
+
+    /// X 当前 schema 把外层节点叫 `timeline`（不带 _v2）。
+    #[test]
+    fn parse_likes_response_accepts_timeline_schema() {
+        let data = json!({
+            "data": {
+                "user": {
+                    "result": {
+                        "timeline": {
+                            "timeline": {
+                                "instructions": [{
+                                    "type": "TimelineAddEntries",
+                                    "entries": [
+                                        { "entryId": "tweet-1234" },
+                                        {
+                                            "entryId": "cursor-bottom-x",
+                                            "content": { "value": "next-cursor" }
+                                        }
+                                    ]
+                                }]
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let (tweets, cursor) = parse_likes_response(&data);
+        assert_eq!(tweets.len(), 1);
+        assert_eq!(cursor, Some("next-cursor".to_string()));
+    }
+
+    /// 旧 schema（V2 timeline opt-in 时期）把外层节点叫 `timeline_v2`，仍要兼容。
+    #[test]
+    fn parse_likes_response_accepts_timeline_v2_schema() {
+        let data = json!({
+            "data": {
+                "user": {
+                    "result": {
+                        "timeline_v2": {
+                            "timeline": {
+                                "instructions": [{
+                                    "type": "TimelineAddEntries",
+                                    "entries": [{ "entryId": "tweet-9999" }]
+                                }]
+                            }
+                        }
+                    }
+                }
+            }
+        });
+        let (tweets, cursor) = parse_likes_response(&data);
+        assert_eq!(tweets.len(), 1);
+        assert_eq!(cursor, None);
+    }
+
+    #[test]
+    fn parse_likes_response_unknown_schema_returns_empty() {
+        let data = json!({"data":{"user":{"result":{"unknown_field": {}}}}});
+        let (tweets, cursor) = parse_likes_response(&data);
+        assert!(tweets.is_empty());
+        assert!(cursor.is_none());
+    }
+
+    /// X schema 演进：screen_name / name 从 user.legacy 挪到 user.core。新 schema 应识别。
+    #[test]
+    fn entry_to_summary_handles_new_user_core_schema() {
+        let entry = json!({
+            "entryId": "tweet-1",
+            "content": {
+                "itemContent": {
+                    "tweet_results": {
+                        "result": {
+                            "rest_id": "1",
+                            "core": {
+                                "user_results": {
+                                    "result": {
+                                        "core": {
+                                            "screen_name": "newhandle",
+                                            "name": "New Display"
+                                        }
+                                    }
+                                }
+                            },
+                            "legacy": { "full_text": "hi", "created_at": "Thu Apr 06 15:24:15 +0000 2017" }
+                        }
+                    }
+                }
+            }
+        });
+        let s = entry_to_summary(&entry, false).unwrap();
+        assert_eq!(s.author_handle, "newhandle");
+        assert_eq!(s.author_display_name, "New Display");
+    }
+
+    /// 旧 schema：screen_name / name 在 user.legacy 下，仍要识别。
+    #[test]
+    fn entry_to_summary_handles_legacy_user_schema() {
+        let entry = json!({
+            "entryId": "tweet-2",
+            "content": {
+                "itemContent": {
+                    "tweet_results": {
+                        "result": {
+                            "rest_id": "2",
+                            "core": {
+                                "user_results": {
+                                    "result": {
+                                        "legacy": {
+                                            "screen_name": "oldhandle",
+                                            "name": "Old Display"
+                                        }
+                                    }
+                                }
+                            },
+                            "legacy": { "full_text": "hi" }
+                        }
+                    }
+                }
+            }
+        });
+        let s = entry_to_summary(&entry, false).unwrap();
+        assert_eq!(s.author_handle, "oldhandle");
+        assert_eq!(s.author_display_name, "Old Display");
     }
 }
