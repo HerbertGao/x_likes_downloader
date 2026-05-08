@@ -1,7 +1,7 @@
 ---
-name: "OPSX: 探索"
+name: "OPSX: Explore"
 description: 进入探索模式 - 构思想法、调查问题、澄清需求
-category: 工作流
+category: Workflow
 tags: [workflow, explore, experimental, thinking]
 ---
 
@@ -59,10 +59,10 @@ tags: [workflow, explore, experimental, thinking]
 │        大量使用 ASCII 图表              │
 ├─────────────────────────────────────────┤
 │                                         │
-│   ┌────────┐         ┌────────┐        │
-│   │  状态  │────────▶│  状态  │        │
-│   │   A    │         │   B    │        │
-│   └────────┘         └────────┘        │
+│      ┌────────┐         ┌────────┐      │
+│      │  状态  │────────▶│  状态  │      │
+│      │   A    │         │   B    │      │
+│      └────────┘         └────────┘      │
 │                                         │
 │   系统图、状态机、数据流、              │
 │   架构草图、依赖图、比较表              │
@@ -119,14 +119,14 @@ openspec-cn list --json
 
 3. **当做出决定时提议捕获**
 
-   | 见解类型 | 捕获位置 |
-   |--------------|------------------|
-   | 发现新需求 | `specs/<capability>/spec.md` |
-   | 需求变更 | `specs/<capability>/spec.md` |
-   | 做出设计决策 | `design.md` |
-   | 范围变更 | `proposal.md` |
-   | 识别出新工作 | `tasks.md` |
-   | 假设失效 | 相关产出物 |
+    | 见解类型 | 捕获位置               |
+    |----------------------------|--------------------------------|
+    | 发现新需求 | `specs/<capability>/spec.md` |
+    | 需求变更        | `specs/<capability>/spec.md` |
+    | 做出设计决策       | `design.md`                  |
+    | 范围变更              | `proposal.md`                |
+    | 识别出新工作        | `tasks.md`                   |
+    | 假设失效 | 相关产出物              |
 
    提议示例：
    - "这是一个设计决策。要把它记录在 design.md 中吗？"

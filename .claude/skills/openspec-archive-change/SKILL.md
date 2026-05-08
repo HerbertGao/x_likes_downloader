@@ -2,11 +2,11 @@
 name: openspec-archive-change
 description: 归档实验性工作流中已完成的变更。当用户想要在实现完成后最终确定并归档变更时使用。
 license: MIT
-compatibility: 需要 openspec CLI。
+compatibility: 需要 openspec-cn CLI。
 metadata:
   author: openspec
   version: "1.0"
-  generatedBy: "1.2.0"
+  generatedBy: "1.3.1"
 ---
 
 归档实验性工作流中已完成的变更。
@@ -29,10 +29,10 @@ metadata:
    运行 `openspec-cn status --change "<name>" --json` 检查产出物完成情况。
 
    解析 JSON 以了解：
-   - `schemaName`：正在使用的工作流
-   - `artifacts`：产出物列表及其状态（`done` 或其他）
+   - `schemaName`：正在使用的工作流 Schema
+   - `artifacts`：产出物列表及其状态（`done` 或其他状态值）
 
-   **如果有任何产出物未 `done`：**
+   **如果有任何产出物不是 `done`：**
    - 显示列出未完成产出物的警告
    - 使用 **AskUserQuestion tool** 确认用户是否要继续
    - 如果用户确认，则继续
@@ -97,7 +97,7 @@ metadata:
 ## 归档完成
 
 **变更：** <change-name>
-**模式：** <schema-name>
+**Schema：** <schema-name>
 **归档至：** openspec/changes/archive/YYYY-MM-DD-<name>/
 **规范：** ✓ 已同步到主规范（或 "无增量规范" 或 "同步已跳过"）
 

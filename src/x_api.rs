@@ -49,7 +49,7 @@ impl XApi {
                 fieldtoggles_encoded
             );
 
-            println!("请求 URL: {}", url);
+            eprintln!("请求 URL: {}", url);
 
             let mut headers = reqwest::header::HeaderMap::new();
             headers.insert(
@@ -67,7 +67,7 @@ impl XApi {
             headers.insert("X-Csrf-Token", self.config.ct0.parse()?);
             headers.insert("User-Agent", self.config.user_agent.parse()?);
 
-            println!("请求 headers: {:?}", headers);
+            eprintln!("请求 headers: {:?}", headers);
 
             let response = self.client.get(&url).headers(headers).send().await?;
 
@@ -80,7 +80,7 @@ impl XApi {
             let data: Value = response.json().await?;
 
             let (tweets, new_cursor) = self.parse_likes_response(&data)?;
-            println!(
+            eprintln!(
                 "本页获取到 {} 条 tweet，cursor: {:?}",
                 tweets.len(),
                 new_cursor

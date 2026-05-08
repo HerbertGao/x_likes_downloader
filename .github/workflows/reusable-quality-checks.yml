@@ -41,3 +41,9 @@ jobs:
 
       - name: 编译检查
         run: cargo check
+
+      - name: 单元测试
+        run: cargo test --lib
+
+      - name: 校验 skill/defaults.json 不含敏感字段
+        run: bash scripts/check-skill-defaults.sh skill/defaults.json
