@@ -161,36 +161,13 @@ CLI 的 `--ids` 快捷方式由 main.rs 层在调用 `download_media` 前先调 
 - **当** 任何调用方调用 `download_media(items, DownloadOpts { subdir: Some(...), .. })`
 - **那么** 实际写入路径必须由 sandbox 模块返回，且位于已配置 base dir 之内
 
-### 需求:stderr NDJSON 进度事件流
-
-当 `xld media download` 以 `--json` 模式运行时，stderr 必须按 newline-delimited JSON 形态输出进度事件，每行一个独立 JSON 对象。事件类型必须包含且仅包含以下种类：
-
-- `{ "event": "download_started", "total": N, "concurrency": n }`：批次开始
-- `{ "event": "item_started", "tweet_id": "...", "url": "...", "index": i, "total": N }`：单项开始
-- `{ "event": "item_progress", "tweet_id": "...", "bytes_done": x, "bytes_total": y }`：单项进度（可选发送，建议每秒至多一次）
-- `{ "event": "item_done", "tweet_id": "...", "status": "downloaded|skipped_existing|failed", "bytes": z }`：单项结束
-- `{ "event": "download_finished", "summary": { total, downloaded, skipped, failed } }`：批次结束
-- `{ "event": "diagnostic", "level": "warn|error", "message": "..." }`：诊断/错误（替代自由文本）
-
-stderr 上**仅**输出上述事件。系统禁止在 stderr 输出 ANSI escape codes、`indicatif` 进度条字符或任何非 NDJSON 自由文本。
-
-非 `--json` 模式（人类 CLI）下，stderr 行为不变（继续使用 `indicatif` 渲染人类可读进度条）。
-
-#### 场景:--json 模式 stderr 仅 NDJSON
-- **当** 运行 `xld media download --items @x.json --json 2> err.log`
-- **那么** `err.log` 每一非空行必须可被 `serde_json::from_str` 单独解析为合法 JSON 对象
-
-#### 场景:批次开始与结束事件必发
-- **当** 任何 `--json` 调用产生 stderr 输出
-- **那么** 必须存在恰好一个 `download_started` 事件作为首个事件，恰好一个 `download_finished` 事件作为末个事件
-
-#### 场景:人类模式不受影响
-- **当** 运行 `xld media download --items @x.json`（无 `--json`）
-- **那么** stderr 输出 `indicatif` 进度条，行为与本变更前一致
-
 ### 需求:不暴露 organize 与旧 download 一把梭给 Agent
 
-Skill 工具表暴露面禁止包含 `organize`（按用户名归档）与旧版 `xld download`（list+下载耦合）。`xld media download` 必须是 Agent 在 Skill 模式下唯一的下载入口。
+Agent 工具表（无论是 v1 Skill 形态还是 v2 MCP `tools/list`）暴露面禁止包含 `organize`（按用户名归档）与旧版 `xld download`（list+下载耦合）。`download_media` 必须是 Agent 模式下唯一的下载入口。
+
+#### 场景:MCP tools/list 清单
+- **当** MCP 客户端发送 `tools/list` 请求
+- **那么** 响应工具集必须仅包含 `list_likes`、`download_media`、`auth_status`、`setup_from_curl`，禁止出现 `organize` 或旧 `download` 入口
 
 #### 场景:Skill 工具表清单
 - **当** 检视 `skill/SKILL.md` 中声明的 Agent 可调用工具集
