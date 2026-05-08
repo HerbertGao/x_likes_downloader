@@ -458,6 +458,16 @@ validate_version_consistency() {
       err "$f version='$v' != Cargo.toml='$cargo_ver'"
       bad=1
     fi
+    # version.sh atomically updates `.minimum_x_likes_downloader` together with `.version`;
+    # the spec's "all version fields consistent" guard must also catch drift in this field.
+    v=$(jq -r '.minimum_x_likes_downloader // empty' "$f")
+    if [[ -z "$v" ]]; then
+      err "$f missing minimum_x_likes_downloader (sync'd by scripts/version.sh)"
+      bad=1
+    elif [[ "$v" != "$cargo_ver" ]]; then
+      err "$f minimum_x_likes_downloader='$v' != Cargo.toml='$cargo_ver'"
+      bad=1
+    fi
   fi
 
   f="packaging/codex/.codex-plugin/plugin.json"
