@@ -331,9 +331,11 @@ impl ProgressSink for McpProgressSink {
         let total_items_f = self.total_items as f64;
         match event {
             ProgressEvent::DownloadStarted { total, concurrency } => {
+                // 用 self.total_items（total_items_f）作为 MCP `total` 字段的单一可信源，
+                // 与其它 ProgressEvent 路径保持一致，避免任何"事件字段 vs 构造字段"不一致风险。
                 self.dispatch(
                     0.0,
-                    Some(total as f64),
+                    Some(total_items_f),
                     Some(format!(
                         "starting {} items, concurrency={}",
                         total, concurrency
