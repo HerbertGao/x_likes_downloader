@@ -314,18 +314,36 @@ mod tests {
         assert_eq!(resolved, "fallback");
     }
 
+    /// 单个测试覆盖 `credentials_path` 的两条路径（env override + fallback）。
+    ///
+    /// **不要拆成两个 `#[test]`**：cargo test 默认并行，两个测试若各自 `set_var` /
+    /// `remove_var` 同一个 `XLD_CREDENTIALS_FILE` 会互相破坏断言。CI 上曾因此
+    /// 偶发失败。这里以单测试串行执行解决竞态，同时仍覆盖两条路径。
     #[test]
-    fn credentials_path_respects_env_override() {
+    fn credentials_path_resolution() {
         use std::env;
-        // 用一个唯一名避免和系统其它测试冲突
         let key = "XLD_CREDENTIALS_FILE";
         let saved = env::var(key).ok();
+
+        // 路径 1：env override 生效
         env::set_var(key, "/tmp/xld-test-cred-override.env");
         let p = credentials_path();
         assert_eq!(
             p,
-            std::path::PathBuf::from("/tmp/xld-test-cred-override.env")
+            std::path::PathBuf::from("/tmp/xld-test-cred-override.env"),
+            "env override 应当返回设置的路径"
         );
+
+        // 路径 2：env 未设时返回某个以 private_tokens.env 结尾的 PathBuf
+        env::remove_var(key);
+        let p = credentials_path();
+        let s = p.to_string_lossy();
+        assert!(
+            s.ends_with("private_tokens.env"),
+            "fallback 应当以 private_tokens.env 结尾，得到: {}",
+            s
+        );
+
         // 还原
         match saved {
             Some(v) => env::set_var(key, v),
@@ -365,18 +383,5 @@ mod tests {
 
         cfg.user_id = String::new();
         assert!(!cfg.is_configured(), "user_id 缺失应当 not configured");
-    }
-
-    #[test]
-    fn credentials_path_returns_pathbuf() {
-        // 不依赖文件系统状态——只断言返回的 PathBuf 末段含 "private_tokens.env"
-        let saved = std::env::var("XLD_CREDENTIALS_FILE").ok();
-        std::env::remove_var("XLD_CREDENTIALS_FILE");
-        let p = credentials_path();
-        let s = p.to_string_lossy();
-        assert!(s.ends_with("private_tokens.env"), "got: {}", s);
-        if let Some(v) = saved {
-            std::env::set_var("XLD_CREDENTIALS_FILE", v);
-        }
     }
 }
