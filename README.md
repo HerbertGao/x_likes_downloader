@@ -1,16 +1,17 @@
 # X Likes Downloader (Rust版本)
 
-一个用Rust编写的X（Twitter）点赞推文媒体下载器，可以自动下载你点赞的推文中的图片和视频。
+一个用 Rust 编写的 X（Twitter）点赞推文媒体下载器：既是面向人类用户的 CLI，也是可被 AI Agent（OpenClaw / Claude Code Skill）驱动的自动化工具。**所有凭据本地化保存**，不依赖第三方 API key 或外部抓取服务。
 
 ## 功能特性
 
-- 🔐 支持X内部API，无需第三方服务
+- 🔐 支持 X 内部 API，无需第三方服务
 - 📥 自动下载点赞推文中的图片和视频
 - 🔄 支持断点续传，避免重复下载
 - 📁 自动文件整理和分类
 - 🚀 异步下载，支持进度显示
-- 🌐 支持HTTP代理
+- 🌐 支持 HTTP 代理
 - 📊 详细的下载统计信息
+- 🤖 **Agent Skill 模式**：暴露 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` 四个工具，输出严格 JSON 信封 + NDJSON 进度事件流
 
 ## 安装
 
@@ -94,6 +95,24 @@ x_likes_downloader organize
 # 或指定自定义目录
 x_likes_downloader organize --source-dir downloads --target-dir organized
 ```
+
+## 作为 Agent Skill 使用
+
+本项目同时是一个 **OpenClaw / Claude Code Skill**，让 AI Agent 通过自然语言操作你自己的 X 点赞列表：
+
+- **典型对话**："看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
+- **完整安装/配置流程**：见 [`skill/README.md`](./skill/README.md)
+- **Agent 工具表与调用约定**：见 [`skill/SKILL.md`](./skill/SKILL.md)
+
+**三类用户路径**：
+
+| 用户类型 | 入口 | 特点 |
+|---|---|---|
+| 人类 CLI | `x_likes_downloader download / setup / organize / update` | 行为同旧版本，向后兼容 |
+| Skill 装机用户 | `xld likes list --json` / `xld media download --items` / `xld auth status` | stdout JSON 信封 + stderr NDJSON 进度，沙箱化下载 |
+| MCP 集成方（v2） | 暂未实施；lib API 已为此预留 | 计划复用同一份 `xld` 能力层 |
+
+新子命令的 stdout 严格输出单个 JSON 信封 `{ ok, data?, meta, error? }`，调试日志走 stderr，错误以结构化 `error.kind` 区分（`auth_expired` / `endpoint_stale` / `rate_limited` / `network_error` / `not_configured` / 等）。
 
 ## 配置选项
 

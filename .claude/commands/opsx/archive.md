@@ -1,7 +1,7 @@
 ---
-name: "OPSX: 归档"
+name: "OPSX: Archive"
 description: 归档实验性工作流中已完成的变更
-category: 工作流
+category: Workflow
 tags: [workflow, archive, experimental]
 ---
 
@@ -25,10 +25,10 @@ tags: [workflow, archive, experimental]
    运行 `openspec-cn status --change "<name>" --json` 检查产出物完成情况。
 
    解析 JSON 以了解：
-   - `schemaName`：正在使用的工作流
-   - `artifacts`：产出物列表及其状态（`done` 或其他）
+   - `schemaName`：正在使用的工作流 Schema
+   - `artifacts`：产出物列表及其状态（`done` 或其他状态值）
 
-   **如果有任何产出物未 `done`：**
+   **如果有任何产出物不是 `done`：**
    - 显示列出未完成产出物的警告
    - 提示用户确认是否继续
    - 如果用户确认，则继续
