@@ -67,14 +67,16 @@ pub async fn download_media(
     let filename_format = Arc::new(opts.filename_format.clone());
     let set_mtime = opts.set_mtime;
 
+    // 拿一份 owned items 拷贝；让闭包不再持有 &[MediaItem] 的生命周期，
+    // 满足 rmcp tool 宏对 future 的 HRTB / Send + 'static 要求。
+    let owned_items: Vec<MediaItem> = items.to_vec();
     let results: Vec<DownloadResult> =
-        stream::iter(items.iter().enumerate().map(|(index, item)| {
+        stream::iter(owned_items.into_iter().enumerate().map(|(index, item)| {
             let client = client_arc.clone();
             let target_dir = target_dir_arc.clone();
             let ua = user_agent.clone();
             let sink = sink_inner.clone();
             let filename_format = filename_format.clone();
-            let item = item.clone();
             async move {
                 sink.emit(ProgressEvent::ItemStarted {
                     tweet_id: item.tweet_id.clone(),

@@ -5,9 +5,9 @@ use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 
 use x_likes_downloader::agent::types::{
-    AuthStatus, DownloadOpts, ListOpts, MediaItem, NdjsonStderrSink, ProgressEvent, ProgressSink,
+    AuthStatus, DownloadOpts, ListOpts, MediaItem, NullSink, ProgressEvent, ProgressSink,
 };
-use x_likes_downloader::agent::{auth_status, download_media, list_likes};
+use x_likes_downloader::agent::{auth_status, download_media, list_likes, run_serve_mcp};
 use x_likes_downloader::config::{self, Config};
 use x_likes_downloader::envelope::{Meta, OutputEnvelope};
 use x_likes_downloader::error::{ErrorKind, ErrorPayload};
@@ -52,6 +52,12 @@ enum Commands {
         #[command(subcommand)]
         action: AuthAction,
     },
+    /// 启动 MCP server（v2 Agent 接口，stdio transport）
+    Serve {
+        /// 启用 MCP server 模式（必填——保留 flag 以便将来加其它 protocol）
+        #[arg(long)]
+        mcp: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -92,7 +98,7 @@ enum MediaAction {
         /// 并发下载数（[1, 16]，默认 4）
         #[arg(long, default_value_t = 4)]
         concurrency: u32,
-        /// JSON 输出（stdout 信封 + stderr NDJSON 进度）
+        /// JSON 输出（stdout 信封；进度反馈走 MCP server，不走 stderr）
         #[arg(long)]
         json: bool,
     },
@@ -163,6 +169,14 @@ async fn main() -> Result<()> {
         Commands::Auth { action } => match action {
             AuthAction::Status { json: _ } => run_auth_status().await,
         },
+        Commands::Serve { mcp } => {
+            if !mcp {
+                eprintln!("error: serve 子命令当前仅支持 --mcp（MCP server 模式）");
+                std::process::exit(1);
+            }
+            run_serve_mcp().await?;
+            0
+        }
     };
 
     if exit_code != 0 {
@@ -312,8 +326,10 @@ async fn run_media_download(
         ..Default::default()
     };
 
+    // v2.0：删除了 NdjsonStderrSink。`--json` 模式 stderr 仅含诊断文本（无 NDJSON 进度事件流），
+    // Agent 的进度反馈走 MCP `notifications/progress`（见 `xld serve --mcp`）。
     let sink: Arc<dyn ProgressSink> = if json {
-        Arc::new(NdjsonStderrSink)
+        Arc::new(NullSink)
     } else {
         Arc::new(IndicatifSink::new())
     };

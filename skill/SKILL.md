@@ -1,6 +1,6 @@
-# X Likes Downloader Skill
+# X Likes Downloader Skill (v2 / MCP)
 
-让 AI Agent 通过自然语言操作"我自己的 X 点赞"——列点赞、按需下载媒体、自检凭据健康状态。底层调用本地的 `xld` 二进制（Rust 实现），凭据完全保留在用户机器上。
+让 AI Agent 通过自然语言操作"我自己的 X 点赞"——列点赞、按需下载媒体、自检凭据健康状态。底层是本地的 `xld serve --mcp` MCP server（Rust 实现），凭据完全保留在用户机器上。
 
 **适用场景**：
 
@@ -14,112 +14,136 @@
 
 ## 前置依赖
 
-- `xld` 可执行文件 ≥ **1.0.6**（含 Agent Skill 子命令）
-- `xld` 必须在 PATH 中。Skill 调用前会执行 `xld --version`；若不存在，将返回 `error.kind: "binary_missing"`，请将用户引导到 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases)
-- 用户已运行 `xld setup` 导入 cURL（首次使用）
+- `xld` 可执行文件 ≥ **2.0.0**（含 `xld serve --mcp` 子命令）
+- `xld` 必须在 PATH 中。MCP 客户端尝试启动 `xld` 失败时（如未安装），客户端会提示——请将用户引导到 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases)
+- 用户已运行 `xld setup --curl-file <path>` 导入 cURL（首次使用）
+
+---
+
+## 安装方式（client 配置）
+
+本 skill 通过 MCP server 形态分发——客户端注册一次即可。
+
+### Claude Code
+
+在 `~/.claude/settings.json` 或项目 `.mcp.json` 加入：
+
+```jsonc
+{
+  "mcpServers": {
+    "xld": {
+      "command": "x_likes_downloader",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+`command` 用的是 `cargo install` 实际安装的 binary 名（`x_likes_downloader`）。如果你已经把它软链到 `xld` 短名（如 `ln -s "$(which x_likes_downloader)" /usr/local/bin/xld`），可以直接写 `"command": "xld"`。
+
+重启 Claude Code 后，4 个工具自动可用。
+
+### OpenClaw
+
+通过 `mcporter` 注册或在 OpenClaw 配置文件中加同等内容（参考 [OpenClaw MCP 文档](https://docs.openclaw.ai/cli/mcp)）。
+
+### 其它 MCP 客户端（Hermes / Cursor / etc.）
+
+通用配置：`command = xld`、`args = ["serve", "--mcp"]`、`transport = stdio`。详见 `skill/mcp-config.json`。
 
 ---
 
 ## Agent 工具表
 
-Skill 暴露**四个**工具，每个底层为一条 `xld` 子命令调用，stdout 为 JSON 信封，stderr 视工具不同含 NDJSON 进度或诊断文本。
+Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `tools/list` 自动发现它们；下面给出每个工具的语义、参数、返回值与典型错误码。
 
 ### 1. `list_likes`
 
-**用途**：拉取当前账号的点赞推文列表。
+**用途**：拉取当前账号的点赞推文列表（扁平 schema：id / author_handle / text / media[] / created_at 等）。返回值含 cursor 用于增量同步。Agent 应当把 `tweets[].media[]` 元素直接传给 `download_media` 下载。
 
-**调用形态**：
-```
-xld likes list [--all] [--since-cursor <c>] [--count <n>] [--include-raw] --json
-```
-
-**参数**：
+**参数（JSON Schema 已通过 `tools/list` 自动暴露给客户端）**：
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `all` | bool | 否 | 翻页拉全部历史；默认仅首页 |
-| `since_cursor` | string | 否 | 增量同步起点游标（来自上次输出的 `meta.cursor`） |
+| `since_cursor` | string | 否 | 增量同步起点游标（来自上次输出的 `cursor` 字段） |
 | `count` | number | 否 | 单页条数；默认 20 |
 | `include_raw` | bool | 否 | 同时返回原始 GraphQL entry，**显著增加 token 成本**（5–10 倍），仅用于调试 |
 
-**返回结构**（成功）：
+**返回内容**（`CallToolResult { isError: false, content: [{type: "text", text: "<JSON>"}] }`，text 反序列化后）：
 
 ```jsonc
 {
-  "ok": true,
-  "meta": { "schema_version": 1, "cursor": "..." },
-  "data": {
-    "tweets": [
-      {
-        "id": "1234567890",
-        "author_handle": "alice",
-        "author_display_name": "Alice",
-        "text": "tweet 正文（无 t.co 替换）",
-        "created_at": "Thu Apr 06 15:24:15 +0000 2017",
-        "tweet_url": "https://x.com/alice/status/1234567890",
-        "is_retweet": false,
-        "is_reply": false,
-        "media": [
-          {
-            "tweet_id": "1234567890",
-            "type": "image",            // image | video | gif
-            "url": "https://pbs.twimg.com/media/AAA.jpg?format=jpg&name=orig",
-            "suggested_filename": "AAA.jpg",
-            "bytes": null
-          }
-        ],
-        "liked_at": null
-      }
-    ],
-    "cursor": "...",
-    "schema_version": 1
-  }
+  "tweets": [
+    {
+      "id": "1234567890",
+      "author_handle": "alice",
+      "author_display_name": "Alice",
+      "text": "tweet 正文（无 t.co 替换）",
+      "created_at": "Thu Apr 06 15:24:15 +0000 2017",
+      "tweet_url": "https://x.com/alice/status/1234567890",
+      "is_retweet": false,
+      "is_reply": false,
+      "media": [
+        {
+          "tweet_id": "1234567890",
+          "type": "image",            // image | video | gif
+          "url": "https://pbs.twimg.com/media/AAA.jpg?format=jpg&name=orig",
+          "suggested_filename": "AAA.jpg",
+          "bytes": null
+        }
+      ],
+      "liked_at": null
+    }
+  ],
+  "cursor": "...",
+  "schema_version": 1
 }
 ```
 
-**典型错误 `kind`**：`auth_expired` / `endpoint_stale` / `rate_limited` / `network_error` / `not_configured` / `internal_error`
+**典型错误 `kind`**（content 反序列化后含 `{kind, message, hint}`）：`auth_expired` / `endpoint_stale` / `rate_limited` / `network_error` / `not_configured` / `internal_error`
 
 ---
 
 ### 2. `download_media`
 
-**用途**：按一组 `MediaItem` 下载媒体到沙箱目录。**最佳实践**：直接把 `list_likes` 输出的 `data.tweets[].media[]` 元素拼成数组传回，不要做转换——`MediaItem` 形态完全一致。
-
-**调用形态**：
-```
-# 首选（item 形态）：
-xld media download --items @items.json [--subdir <name>] [--concurrency <n>] --json
-
-# 快捷方式（按 tweet ID，内部触发 list_likes 拉详情）：
-xld media download --ids 123,456 [--subdir <name>] [--concurrency <n>] --json
-```
+**用途**：把一组 `MediaItem` 下载到沙箱目录。**最佳实践**：直接把 `list_likes` 输出的 `tweets[].media[]` 元素拼成数组传回——`MediaItem` 形态完全一致。
 
 **参数**：
 
 | 参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `items` | `MediaItem[]`（JSON 字符串或 `@<file>`） | 与 `ids` 二选一 | 见上 |
-| `ids` | string（逗号分隔 tweet ID） | 与 `items` 二选一 | 仅含 ASCII 数字；非法即拒 |
+| `items` | `MediaItem[]` | 是 | 来自 `list_likes` 的 media 元素列表 |
 | `subdir` | string | 否 | 沙箱内子目录名；不允许 `..` / 绝对路径 / 驱动器盘符 |
 | `concurrency` | number | 否 | 并发下载数；钳位 [1, 16]，默认 4 |
 
-**输出（stdout）**：单个 JSON 信封；`data.downloads[]` 含每项结果，`data.summary` 含计数。
+**进度反馈（重要）**：调用方在 MCP 请求 `_meta.progressToken` 中传入 token，server 会在下载过程中通过 MCP `notifications/progress` 实时推送进度。每条 notification 含：
 
-**输出（stderr，仅 `--json` 模式）**：NDJSON 进度事件，每行一个 JSON 对象：
+- `progress`（数值，**绝对计数**）：**已完成的 item 数**（每完成一个 item 递增 1，绝对单调非递减）。多并发下也保证不回退
+- `total`（数值）：批次总 item 数，与 `progress` 配对使用——client 计算百分比 = `progress / total`
+- `message`（字符串）：当前操作描述，含字节级进度细节（如 "starting tweet 12345"、"tweet 12345 1024/4096"、"tweet 12345 Downloaded"）
+
+这与 [MCP 规范的 `ProgressNotificationParam`](https://modelcontextprotocol.io/specification/2025-11-25) 一致——`progress` 字段无 `[0, 1]` 范围约束，是单调递增的绝对进度数值，与 `total` 字段配对供 client 渲染百分比。完成时发出 `progress == total`（比例 1.0）。
+
+**为什么 `progress` 用 item 计数而不是字节比例**：在 `concurrency > 1` 时多个 item 并发下载，单 item 内字节比例在 item 之间会非单调（item A 跑到 80% 时切换到刚开始的 item B 会"倒退"）。让 `progress` 跟 item 计数走是保证单调性的最简方式；字节级细节仍在 `message` 字段呈现给用户。
+
+**不传 progressToken 时无进度通知**，工具调用阻塞直到所有 item 完成。
+
+**返回内容**（成功）：
 
 ```jsonc
-{"event":"download_started","total":3,"concurrency":4}
-{"event":"item_started","tweet_id":"123","url":"...","index":0,"total":3}
-{"event":"item_progress","tweet_id":"123","bytes_done":1024,"bytes_total":4096}
-{"event":"item_done","tweet_id":"123","status":"downloaded","bytes":4096}
-{"event":"download_finished","summary":{"total":3,"downloaded":2,"skipped":1,"failed":0}}
+{
+  "downloads": [
+    { "tweet_id": "...", "url": "...", "path": "...", "bytes": 12345, "status": "downloaded" },
+    // ... status 可为 "downloaded" / "skipped_existing" / "failed"
+  ],
+  "summary": { "total": 5, "downloaded": 4, "skipped": 1, "failed": 0 }
+}
 ```
 
-支持的 `event` 类型：`download_started` / `item_started` / `item_progress` / `item_done` / `download_finished` / `diagnostic`。
+**典型错误 `kind`**：`sandbox_violation`（subdir 路径穿越）/ `invalid_item`（items 字段不全）/ `invalid_argument`（concurrency 越界）/ `network_error`
 
-**分批使用建议**：当 item 数量 > 20 或预计总字节数 > 50 MB 时，请将下载分成多次调用，**每批 5–10 个 item**。这样 stderr NDJSON 进度能驱动用户可见的分阶段反馈，且避免单次调用阻塞过久。
-
-**典型错误 `kind`**：`sandbox_violation`（subdir 路径穿越）/ `invalid_item`（items 格式错误）/ `invalid_argument`（ids/concurrency 越界、items 与 ids 同传）/ `network_error`
+**分批使用建议**：当 item 数量 > 20 或预计总字节数 > 50 MB 时，请将下载分成多次调用，**每批 5–10 个 item**。这样 MCP `notifications/progress` 能驱动用户可见的分阶段反馈，且避免单次调用阻塞过久。
 
 ---
 
@@ -127,21 +151,19 @@ xld media download --ids 123,456 [--subdir <name>] [--concurrency <n>] --json
 
 **用途**：探测当前凭据是否仍可访问 Likes 端点。**实际发起一次轻量真实请求**（约 200ms），不是仅做字段检查。
 
-**调用形态**：
-```
-xld auth status --json
-```
+**参数**：（无）
 
-**返回（健康）**：
+**返回内容（健康）**：
+
 ```jsonc
-{ "ok": true, "data": { "status": "healthy", "checked_at": "2026-05-07T12:34:56+00:00" } }
+{ "status": "healthy", "checked_at": "2026-05-08T12:34:56+00:00" }
 ```
 
-**返回（失效）**：`error.kind` 为 `auth_expired` / `endpoint_stale` / `rate_limited` / `network_error` / `not_configured`。
+**返回内容（失效）**：`isError: true`，content 含 `{ kind, message, hint }` 形态错误，`kind` 为 `auth_expired` / `endpoint_stale` / `rate_limited` / `network_error` / `not_configured`
 
 #### `auth_status` 使用规范（重要）
 
-`auth_status` 执行真实网络请求，不应被频繁调用。**Agent 应当仅在以下三种场景调用**：
+`auth_status` 执行真实网络请求，**不应被频繁调用**。**Agent 应当仅在以下三种场景调用**：
 
 1. **会话起始预检**（最多一次）：用户开始一段操作 X 点赞的对话时，先 ping 一下确认环境健康
 2. **错误后确认**：其它工具返回 `auth_expired` 或 `endpoint_stale` 时，调一次确认是否真的需要重导 cURL
@@ -161,41 +183,36 @@ xld auth status --json
 
 **用途**：从用户提供的 cURL 文本导入凭据 + 协议参数（首次配置或 cookie 失效后重导）。
 
-**调用形态**：
-```
-xld setup --curl-file <path> --json
-```
+**参数**：
 
-`--json` 触发 stdout JSON 信封；不带 `--json` 时是人类文本（`生成 ... 成功！` / `初始化完成。`），Agent 必须使用 `--json`。
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `curl_text` | string | 是 | 完整的 cURL 文本（从浏览器 DevTools "Copy as cURL (bash)" 拷贝） |
 
-或编程式（仅 lib 层，未直接通过 CLI 暴露）：调用 lib 函数 `xld::agent::import_curl(curl_text)`。
+**安全保证**：函数内存解析，**不**写临时文件；返回值**不**回显任何凭据。
 
-**返回结构**（成功）：
+**返回内容（成功）**：
 
 ```jsonc
 {
-  "ok": true,
-  "meta": { "schema_version": 1 },
-  "data": {
-    "written": true,
-    "path": "data/private_tokens.env",
-    "protocol_params_extracted": true
-  }
+  "written": true,
+  "path": "/Users/.../Library/Application Support/xld/private_tokens.env",
+  "protocol_params_extracted": true
 }
 ```
 
-**典型错误 `error.kind`**：
+**典型错误 `kind`**：
 
-- `invalid_argument`：cURL 文件读取失败 / cURL 内容不是 Likes 端点 / cookie 缺字段
-- `internal_error`：写入 `data/private_tokens.env` 失败
+- `invalid_argument`：cURL 内容不是 Likes 端点 / cookie 缺字段 / Bearer 缺失
+- `internal_error`：写入凭据文件失败
 
-**当 Agent 引导用户时**：告诉用户在浏览器中打开 X，登录后从 DevTools Network 标签页找到任意 `/Likes` API 请求，右键"Copy as cURL"，保存到文件，然后运行 `xld setup --curl-file <path> --json`。
+**当 Agent 引导用户时**：告诉用户在浏览器中打开 X，登录后从 DevTools Network 标签页找到任意 `/Likes` API 请求，右键"Copy as cURL"，把整个文本作为 `curl_text` 参数传给本工具。
 
 ---
 
 ## 不暴露的能力
 
-以下 `xld` 子命令**不在** Agent 工具表内，请勿调用：
+以下 `xld` 子命令**不在** Agent 工具表内（也不在 MCP `tools/list` 暴露），请勿调用：
 
 - `xld download`：旧版"列+下"一把梭，写到 `./downloads`，不走沙箱。保留给人类用户的现有工作流
 - `xld organize`：按用户名归档已下载文件。Agent 通常会按自己的逻辑（按主题、时间）组织内容，无需服务端归档
@@ -203,23 +220,40 @@ xld setup --curl-file <path> --json
 
 ---
 
-## 调用约定总览
+## 调用约定总览（v2 MCP）
 
 | 项 | 约定 |
 |---|---|
-| stdout | **单个 JSON 信封**：`{ ok, data?, meta, error? }`。Agent 应直接 `JSON.parse` |
-| stderr | `download_media --json` 输出 NDJSON 进度；其它工具仅有诊断文本，可不解析 |
-| 退出码 0 | 成功 |
-| 退出码 2 | 可重试错误（`auth_expired` / `endpoint_stale` / `rate_limited` / `network_error`） |
-| 退出码 1 | 不可恢复（`not_configured` / `invalid_argument` / `invalid_item` / `sandbox_violation` / `internal_error`） |
-| `auth_expired` / `endpoint_stale` | 引导用户重新导出 cURL → `xld setup --curl-file <path> --json` |
-| `binary_missing` | 引导用户到 GitHub Releases 安装 `xld` |
+| 协议 | MCP（JSON-RPC 2.0，stdio transport） |
+| 工具调用 | `tools/call { name, arguments }` |
+| 成功 | `CallToolResult { isError: false, content: [{type:"text", text: <JSON>}] }`，text 反序列化即结果 |
+| 业务错误 | `CallToolResult { isError: true, content: [{type:"text", text: <error JSON>}] }`，text 含 `{kind, message, hint, retry_after?}` |
+| 协议错误 | JSON-RPC level error response（unknown tool、bad args 等） |
+| 进度反馈 | `download_media` 在请求带 `_meta.progressToken` 时通过 MCP `notifications/progress` 推送；其它工具无进度 |
+| Cancellation | v2.0 收到 `notifications/cancelled` **被忽略**（仅 stderr 日志记录）；客户端如需强制终止可关闭 MCP 连接 |
+| `auth_expired` / `endpoint_stale` | Agent 应建议用户重新导出 cURL 并调用 `setup_from_curl` |
 
 ---
 
 ## 安全与边界
 
-- 凭据（auth_token / ct0 / bearer）只存在于用户本地 `data/private_tokens.env`，永远不入仓
-- `download_media` 的写入路径被 sandbox 严格限定在 base dir 之内；Agent 即使尝试 `--subdir "../etc"` 也会被拒绝
+- 凭据（auth_token / ct0 / bearer / personalization_id）**永远不出 MCP 通道**——`tools/call` 响应不含任何凭据字段；`setup_from_curl` 返回值仅含 path 与 written 标志
+- `download_media` 的写入路径被 sandbox 严格限定在 base dir 之内；Agent 即使尝试 `subdir = "../etc"` 也会被拒绝（返回 `sandbox_violation`）
+- 凭据存储在用户本地稳定路径（macOS: `~/Library/Application Support/xld/private_tokens.env`；Linux/Windows 类似），永远不入仓
 - 使用 X 内部 GraphQL 端点理论上违反 X ToS，由用户承担合规边界
 - 本 skill 不引入主动节流，依赖现有翻页节奏；Agent 大批量调用可能触发 X 的 anti-bot
+
+---
+
+## 与人类 CLI 接口的关系
+
+`xld serve --mcp` 是 v2 给 Agent 用的接口；**人类用户继续可以**直接在 shell 里跑：
+
+```bash
+xld setup --curl-file ~/curl_command.txt
+xld auth status --json | jq
+xld likes list --count 10 --json | jq '.data.tweets[] | {id, author_handle, text}'
+xld media download --items @items.json --concurrency 4
+```
+
+这些 `--json` 子命令的 stdout JSON 信封契约**未变**，仍是人类调试 / shell pipeline 的首选。它们与 MCP server 共享同一份 lib 实现（`agent::list_likes` / `agent::download_media` / `agent::auth_status` / `agent::import_curl`），任何修复同时受益。

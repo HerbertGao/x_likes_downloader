@@ -8,36 +8,45 @@
 
 ## 安装六步
 
-### 1. 安装 `xld` 二进制
+### 1. 安装 `x_likes_downloader` 二进制
 
-从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台版本：
+binary 实际名为 `x_likes_downloader`（与 Cargo `[[bin]]` 配置一致）。后续示例为简洁同时给"短名 `xld`"——你可以选择直接用全名，或建一个 `xld` 软链。
+
+从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台版本（保持 binary 名 `x_likes_downloader`）：
 
 ```bash
 # macOS Apple Silicon
-curl -fsSL -o /usr/local/bin/xld https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_macos_arm64
-chmod +x /usr/local/bin/xld
+curl -fsSL -o /usr/local/bin/x_likes_downloader https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_macos_arm64
+chmod +x /usr/local/bin/x_likes_downloader
 
 # macOS Intel
-curl -fsSL -o /usr/local/bin/xld https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_macos_x86_64
-chmod +x /usr/local/bin/xld
+curl -fsSL -o /usr/local/bin/x_likes_downloader https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_macos_x86_64
+chmod +x /usr/local/bin/x_likes_downloader
 
 # Linux x86_64
-sudo curl -fsSL -o /usr/local/bin/xld https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_linux_x86_64
-sudo chmod +x /usr/local/bin/xld
+sudo curl -fsSL -o /usr/local/bin/x_likes_downloader https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_linux_x86_64
+sudo chmod +x /usr/local/bin/x_likes_downloader
 
-# Windows x86_64（PowerShell）
-Invoke-WebRequest -Uri https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_windows_x86_64.exe -OutFile $env:USERPROFILE\xld.exe
-# 然后将 %USERPROFILE% 加入 PATH
+# Windows x86_64（PowerShell）—— 把 %USERPROFILE% 加入 PATH
+Invoke-WebRequest -Uri https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_windows_x86_64.exe -OutFile $env:USERPROFILE\x_likes_downloader.exe
+```
+
+可选——加 `xld` 短名（让后续命令更短）：
+
+```bash
+# macOS / Linux
+sudo ln -s "$(which x_likes_downloader)" /usr/local/bin/xld
+# 之后 `xld setup ...` 等命令都能用
 ```
 
 验证：
 
 ```bash
-xld --version
-# 期望输出：x_likes_downloader 1.0.6 或更新
+x_likes_downloader --version
+# 期望输出：x_likes_downloader 2.0.0 或更新
 ```
 
-> 本 skill 要求 `xld` ≥ **1.0.6**（含 Agent Skill 子命令）。
+> 本 skill v2 要求 binary ≥ **2.0.0**（含 `serve --mcp` MCP server 子命令）。
 
 ### 2. 从浏览器抓取 cURL
 
@@ -73,17 +82,55 @@ xld setup --curl-file ~/curl_command.txt
 xld setup --curl-file ~/curl_command.txt --download-dir /Volumes/Archive/xld
 ```
 
-### 5. 在 Agent 里注册本 skill
+### 5. 注册 MCP server
+
+v2 的接入形态是 **MCP server**——客户端启动时以子进程形式 spawn `xld serve --mcp`，通过 stdio pipe 通信。配置一次即可。
 
 #### Claude Code
 
-把本目录（`skill/`）作为 skill 路径添加到 Claude Code 配置中（具体方式见 Claude Code 文档的 skill 注册一节）。
+在 `~/.claude/settings.json`（用户级）或项目根 `.mcp.json`（项目级）加：
+
+```jsonc
+{
+  "mcpServers": {
+    "xld": {
+      "command": "x_likes_downloader",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+`command` 必须是 `cargo install` 或 GitHub Releases 安装的实际 binary 名 `x_likes_downloader`。如果你想用更短的命令名 `xld`，自己软链（一次性）：
+
+```bash
+# macOS / Linux
+sudo ln -s "$(which x_likes_downloader)" /usr/local/bin/xld
+# 然后配置可改为 "command": "xld"
+```
+
+重启 Claude Code 后，`list_likes` / `download_media` / `auth_status` / `setup_from_curl` 4 个工具自动可用。
 
 #### OpenClaw
 
-参考 OpenClaw skill 注册流程，把仓库的 `skill/` 路径或本仓库 release zip 作为来源。
+通过 `mcporter` 注册（推荐）：
+
+```bash
+# 让 OpenClaw 发现并连接到本地 xld MCP server
+mcporter add xld --command xld --args "serve --mcp"
+```
+
+或手动编辑 OpenClaw 的 MCP 配置文件（具体路径见 [OpenClaw MCP 文档](https://docs.openclaw.ai/cli/mcp)），加入与上面 Claude Code 相同的配置内容。
+
+#### 其它 MCP 客户端（Hermes / Cursor / etc.）
+
+通用配置：`command = xld`、`args = ["serve", "--mcp"]`、`transport = stdio`。详见 `skill/mcp-config.json`。
 
 ### 6. 验证
+
+启动 Agent 客户端后，让 Agent 调用 `auth_status` 工具——应当返回 `status: "healthy"`。
+
+或手动验证（不通过 Agent）：
 
 ```bash
 xld auth status --json
@@ -92,7 +139,7 @@ xld auth status --json
 应输出：
 
 ```json
-{"ok":true,"data":{"status":"healthy","checked_at":"2026-05-07T..."}, "meta":{"schema_version":1}}
+{"ok":true,"data":{"status":"healthy","checked_at":"2026-05-08T..."},"meta":{"schema_version":1}}
 ```
 
 如果看到 `"kind":"auth_expired"` 或 `"endpoint_stale"`，回到第 2 步重新抓 cURL。
@@ -117,6 +164,7 @@ A: 使用 X 内部 GraphQL + cookie 严格意义上违反 X 的开发者协议�
 
 ## 进一步阅读
 
-- [SKILL.md](./SKILL.md) — Agent 工具表与调用约定
+- [SKILL.md](./SKILL.md) — Agent 工具表与 MCP 协议调用约定
+- [mcp-config.json](./mcp-config.json) — MCP server 启动配置（client 用它配置 mcpServers 段）
 - [defaults.json](./defaults.json) — 公开协议参数（兜底用，cURL 导入时被覆盖）
 - [仓库主 README](../README.md) — 人类 CLI 用法与构建说明

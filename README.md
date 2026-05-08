@@ -11,13 +11,13 @@
 - 🚀 异步下载，支持进度显示
 - 🌐 支持 HTTP 代理
 - 📊 详细的下载统计信息
-- 🤖 **Agent Skill 模式**：暴露 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` 四个工具，输出严格 JSON 信封 + NDJSON 进度事件流
+- 🤖 **Agent MCP server 模式**（v2）：暴露 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` 四个 MCP 工具，原生支持 progress notification
 
 ## 安装
 
 ### 前置要求
 
-- Rust 1.70+
+- Rust **1.85+**（v2.0 起，rmcp 1.x 是 edition 2024 crate；schemars 1.2.x 声明 rust-version 1.74，整体取最高）
 - 有效的X账号和登录状态
 
 ### 方法一：下载预编译版本（推荐）
@@ -96,23 +96,42 @@ x_likes_downloader organize
 x_likes_downloader organize --source-dir downloads --target-dir organized
 ```
 
-## 作为 Agent Skill 使用
+## 作为 Agent MCP server 使用（v2）
 
-本项目同时是一个 **OpenClaw / Claude Code Skill**，让 AI Agent 通过自然语言操作你自己的 X 点赞列表：
+本项目内置了一个 **MCP server**（[Model Context Protocol](https://modelcontextprotocol.io/)），让 AI Agent 通过自然语言操作你自己的 X 点赞列表：
 
 - **典型对话**："看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
 - **完整安装/配置流程**：见 [`skill/README.md`](./skill/README.md)
 - **Agent 工具表与调用约定**：见 [`skill/SKILL.md`](./skill/SKILL.md)
 
-**三类用户路径**：
+### 快速接入（Claude Code）
+
+在 `~/.claude/settings.json` 或项目 `.mcp.json` 加：
+
+```jsonc
+{
+  "mcpServers": {
+    "xld": {
+      "command": "x_likes_downloader",
+      "args": ["serve", "--mcp"]
+    }
+  }
+}
+```
+
+`command` 是 `cargo install` 或 GitHub Releases 安装的实际 binary 名。如果你想用更短的名字 `xld`，自行软链：`sudo ln -s "$(which x_likes_downloader)" /usr/local/bin/xld` 后可以把 `"command"` 改成 `"xld"`。
+
+重启 Claude Code 后，4 个工具自动可用。OpenClaw / Hermes / Cursor 配置类似（参数 `serve --mcp`、transport `stdio`）。
+
+### 三类用户路径
 
 | 用户类型 | 入口 | 特点 |
 |---|---|---|
-| 人类 CLI | `x_likes_downloader download / setup / organize / update` | 行为同旧版本，向后兼容 |
-| Skill 装机用户 | `xld likes list --json` / `xld media download --items` / `xld auth status` | stdout JSON 信封 + stderr NDJSON 进度，沙箱化下载 |
-| MCP 集成方（v2） | 暂未实施；lib API 已为此预留 | 计划复用同一份 `xld` 能力层 |
+| **人类 CLI**（始终可用）| `xld download / setup / organize / update / likes list / media download / auth status` | 行为对老用户向后兼容；`--json` 模式输出 JSON 信封供 shell pipeline / jq 调试 |
+| **Agent via MCP**（v2 主推）| `xld serve --mcp`（由 MCP client 自动 spawn）| MCP `tools/list` 暴露 4 个工具，原生 `notifications/progress` 进度反馈，凭据完全本地化 |
+| **lib 集成方** | `use x_likes_downloader::agent::*;` | 直接调 `list_likes` / `download_media` / `auth_status` / `import_curl` 异步函数 |
 
-新子命令的 stdout 严格输出单个 JSON 信封 `{ ok, data?, meta, error? }`，调试日志走 stderr，错误以结构化 `error.kind` 区分（`auth_expired` / `endpoint_stale` / `rate_limited` / `network_error` / `not_configured` / 等）。
+所有路径共享同一份 lib 实现，任何 bug 修复同时受益。
 
 ## 配置选项
 

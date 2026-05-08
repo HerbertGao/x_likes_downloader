@@ -1,8 +1,9 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MediaType {
     Image,
@@ -10,7 +11,7 @@ pub enum MediaType {
     Gif,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MediaItem {
     pub tweet_id: String,
     #[serde(rename = "type")]
@@ -179,14 +180,17 @@ pub enum ProgressEvent {
     DownloadFinished {
         summary: DownloadSummary,
     },
-    Diagnostic {
-        level: String,
-        message: String,
-    },
 }
 
-/// Sink that receives progress events. CLI injects `NdjsonStderrSink` (json mode)
-/// or `IndicatifSink` (human mode); tests can use a `Vec<ProgressEvent>` collector.
+/// Sink that receives progress events.
+///
+/// 当前实现：
+/// - `NullSink`：丢弃所有事件（lib 函数内部调用、`xld download --json` 模式等）
+/// - `IndicatifSink`：人类 CLI 进度条（`main.rs::IndicatifSink`，仅 binary 内部）
+/// - `McpProgressSink`：把事件转 MCP `notifications/progress` 推送给客户端
+///
+/// 历史上有过 `NdjsonStderrSink` 把事件以 newline-delimited JSON 写到 stderr，
+/// 它在 v2.0 已被移除（被 MCP progress notification 替代；人类 CLI 用 `IndicatifSink`）。
 pub trait ProgressSink: Send + Sync {
     fn emit(&self, event: ProgressEvent);
 }
@@ -196,17 +200,6 @@ pub struct NullSink;
 
 impl ProgressSink for NullSink {
     fn emit(&self, _event: ProgressEvent) {}
-}
-
-/// Emits each event as one line of JSON to stderr.
-pub struct NdjsonStderrSink;
-
-impl ProgressSink for NdjsonStderrSink {
-    fn emit(&self, event: ProgressEvent) {
-        if let Ok(line) = serde_json::to_string(&event) {
-            eprintln!("{}", line);
-        }
-    }
 }
 
 /// Test-only collector sink.
