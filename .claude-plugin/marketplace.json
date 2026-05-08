@@ -1,0 +1,18 @@
+{
+  "name": "x_likes_downloader",
+  "owner": {
+    "name": "HerbertGao",
+    "url": "https://github.com/HerbertGao"
+  },
+  "metadata": {
+    "description": "Self-hosted Claude Code plugin marketplace for x_likes_downloader — operate the user's own X (Twitter) Likes via natural language.",
+    "version": "2.1.0"
+  },
+  "plugins": [
+    {
+      "name": "x_likes",
+      "source": "./packaging/claude-code",
+      "description": "List and download media from your own X (Twitter) likes via natural language. Provides 4 slash commands (/x_likes:auth | list | setup | download) and an MCP server backed by the x_likes_downloader binary."
+    }
+  ]
+}

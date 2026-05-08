@@ -1,0 +1,28 @@
+{
+  "name": "x_likes_downloader",
+  "version": "2.1.0",
+  "interface": {
+    "displayName": "X Likes Downloader",
+    "shortDescription": "Self-hosted Codex CLI marketplace for x_likes_downloader.",
+    "longDescription": "Provides a Codex CLI plugin (x_likes) that lets the user operate their own X (Twitter) Likes feed via natural language — list likes, download attached media, and verify cookie health. Backed by a local x_likes_downloader MCP server. Credentials never leave the user's machine."
+  },
+  "owner": {
+    "name": "HerbertGao",
+    "url": "https://github.com/HerbertGao"
+  },
+  "plugins": [
+    {
+      "name": "x_likes",
+      "source": {
+        "source": "local",
+        "path": "./packaging/codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Productivity",
+      "description": "Operate your own X likes via natural language. Uses a SKILL.md + MCP server combo; LLM dispatches list_likes / download_media / auth_status / setup_from_curl based on intent."
+    }
+  ]
+}

@@ -79,6 +79,89 @@ update_readme_version() {
     fi
 }
 
+# 用 jq 原子性更新 JSON 文件中的字段（写到临时文件再 mv，保证幂等 + 失败安全）。
+# $1 path, $2 jq update expression（如 '.metadata.version = $v'）, $3 new value
+update_json_field() {
+    local path="$1"
+    local expr="$2"
+    local newval="$3"
+    if [ ! -f "$path" ]; then
+        return 0
+    fi
+    if ! jq --arg v "$newval" "$expr" "$path" > "$path.tmp"; then
+        rm -f "$path.tmp"
+        print_error "更新 $path 失败（jq 表达式：$expr）"
+        return 1
+    fi
+    mv "$path.tmp" "$path"
+    print_success "已更新 $path"
+}
+
+# 更新 SOT SKILL.md frontmatter 的 min_binary_version 字段
+# 用 awk 行级替换（仅在第一个 frontmatter 块内），不破坏 markdown 正文。
+update_sot_skill_min_version() {
+    local path="packaging/skill/x_likes/SKILL.md"
+    local newval="$1"
+    if [ ! -f "$path" ]; then
+        return 0
+    fi
+    awk -v ver="$newval" '
+        BEGIN { fm=0; depth=0; replaced=0 }
+        /^---$/ {
+            depth++
+            if (depth == 1) { fm=1; print; next }
+            if (depth == 2) { fm=0; print; next }
+            print; next
+        }
+        fm && /^min_binary_version:/ {
+            print "min_binary_version: " ver
+            replaced=1
+            next
+        }
+        { print }
+        END {
+            if (!replaced) {
+                # frontmatter 不含字段时报错——必须有
+                exit 1
+            }
+        }
+    ' "$path" > "$path.tmp" || { rm -f "$path.tmp"; print_error "$path 缺少 min_binary_version 字段"; return 1; }
+    mv "$path.tmp" "$path"
+    print_success "已更新 $path (min_binary_version=$newval)"
+}
+
+# 同步所有 packaging 版本字段（v2.1+）
+update_packaging_versions() {
+    local new_version=$1
+
+    update_json_field ".claude-plugin/marketplace.json" \
+        '.metadata.version = $v' "$new_version"
+
+    update_json_field ".agents/plugins/marketplace.json" \
+        '.version = $v' "$new_version"
+
+    update_json_field "packaging/claude-code/.claude-plugin/plugin.json" \
+        '.version = $v | .minimum_x_likes_downloader = $v' "$new_version"
+
+    update_json_field "packaging/codex/.codex-plugin/plugin.json" \
+        '.version = $v' "$new_version"
+
+    update_json_field "packaging/openclaw/x_likes/mcp-config.json" \
+        '.minimum_xld_version = $v' "$new_version"
+
+    update_sot_skill_min_version "$new_version"
+
+    # 派生副本：跑 sync-skill.sh 让 host SKILL.md 副本同步新版本号
+    if [ -x "scripts/sync-skill.sh" ]; then
+        if bash scripts/sync-skill.sh > /dev/null; then
+            print_success "已同步 SKILL.md 派生副本"
+        else
+            print_error "scripts/sync-skill.sh 执行失败"
+            return 1
+        fi
+    fi
+}
+
 # 计算新版本号
 calculate_new_version() {
     local current=$1
@@ -194,6 +277,7 @@ do_version_bump() {
     print_success "已更新 Cargo.toml"
 
     update_readme_version "$new_version"
+    update_packaging_versions "$new_version"
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

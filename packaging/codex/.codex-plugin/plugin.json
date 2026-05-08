@@ -1,0 +1,30 @@
+{
+  "name": "x_likes",
+  "version": "2.1.0",
+  "description": "Operate the user's own X (Twitter) Likes via natural language — list, download media, check auth health. Backed by a local x_likes_downloader MCP server.",
+  "author": {
+    "name": "HerbertGao",
+    "url": "https://github.com/HerbertGao"
+  },
+  "homepage": "https://github.com/HerbertGao/x_likes_downloader",
+  "repository": "https://github.com/HerbertGao/x_likes_downloader",
+  "license": "MIT",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "X Likes Downloader",
+    "shortDescription": "List and download media from your own X likes via MCP.",
+    "longDescription": "Operate your own X (Twitter) Likes feed via natural language. Lists liked tweets, downloads attached media (images / videos / GIFs) into a sandboxed local directory, and verifies cookie health — all driven by a local x_likes_downloader MCP server. Credentials never leave your machine.",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Show my latest X likes media",
+      "Download my X likes from this week",
+      "Check my X auth status"
+    ],
+    "brandColor": "#000000"
+  }
+}

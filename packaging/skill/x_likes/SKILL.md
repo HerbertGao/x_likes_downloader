@@ -1,6 +1,12 @@
+---
+name: x_likes
+description: Operate the user's own X (Twitter) Likes via natural language — list likes, download media, check credential health. Backed by a local `x_likes_downloader serve --mcp` MCP server (Rust). All credentials stay on the user's machine.
+min_binary_version: 2.1.0
+---
+
 # X Likes Downloader Skill (v2 / MCP)
 
-让 AI Agent 通过自然语言操作"我自己的 X 点赞"——列点赞、按需下载媒体、自检凭据健康状态。底层是本地的 `xld serve --mcp` MCP server（Rust 实现），凭据完全保留在用户机器上。
+让 AI Agent 通过自然语言操作"我自己的 X 点赞"——列点赞、按需下载媒体、自检凭据健康状态。底层是本地的 `x_likes_downloader serve --mcp` MCP server（Rust 实现），凭据完全保留在用户机器上。
 
 **适用场景**：
 
@@ -14,42 +20,11 @@
 
 ## 前置依赖
 
-- `xld` 可执行文件 ≥ **2.0.0**（含 `xld serve --mcp` 子命令）
-- `xld` 必须在 PATH 中。MCP 客户端尝试启动 `xld` 失败时（如未安装），客户端会提示——请将用户引导到 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases)
-- 用户已运行 `xld setup --curl-file <path>` 导入 cURL（首次使用）
+- `x_likes_downloader` 可执行文件 ≥ **2.1.0**（含 `serve --mcp` 子命令）
+- `x_likes_downloader` 必须在 PATH 中。MCP 客户端尝试启动失败时（如未安装），客户端会提示——请将用户引导到 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases)
+- 用户已运行 `x_likes_downloader setup --curl-file <path>` 导入 cURL（首次使用）
 
----
-
-## 安装方式（client 配置）
-
-本 skill 通过 MCP server 形态分发——客户端注册一次即可。
-
-### Claude Code
-
-在 `~/.claude/settings.json` 或项目 `.mcp.json` 加入：
-
-```jsonc
-{
-  "mcpServers": {
-    "xld": {
-      "command": "x_likes_downloader",
-      "args": ["serve", "--mcp"]
-    }
-  }
-}
-```
-
-`command` 用的是 `cargo install` 实际安装的 binary 名（`x_likes_downloader`）。如果你已经把它软链到 `xld` 短名（如 `ln -s "$(which x_likes_downloader)" /usr/local/bin/xld`），可以直接写 `"command": "xld"`。
-
-重启 Claude Code 后，4 个工具自动可用。
-
-### OpenClaw
-
-通过 `mcporter` 注册或在 OpenClaw 配置文件中加同等内容（参考 [OpenClaw MCP 文档](https://docs.openclaw.ai/cli/mcp)）。
-
-### 其它 MCP 客户端（Hermes / Cursor / etc.）
-
-通用配置：`command = xld`、`args = ["serve", "--mcp"]`、`transport = stdio`。详见 `skill/mcp-config.json`。
+> Skill 发行物按 host 注册（Claude Code plugin / Codex CLI plugin / OpenClaw skill / Hermes / Cursor）；具体注册路径与命令见对应 host adapter README。本文件保持 host-agnostic。
 
 ---
 
@@ -196,7 +171,7 @@ Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `
 ```jsonc
 {
   "written": true,
-  "path": "/Users/.../Library/Application Support/xld/private_tokens.env",
+  "path": "<host-managed credentials path>",
   "protocol_params_extracted": true
 }
 ```
@@ -212,11 +187,11 @@ Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `
 
 ## 不暴露的能力
 
-以下 `xld` 子命令**不在** Agent 工具表内（也不在 MCP `tools/list` 暴露），请勿调用：
+以下 `x_likes_downloader` 子命令**不在** Agent 工具表内（也不在 MCP `tools/list` 暴露），请勿调用：
 
-- `xld download`：旧版"列+下"一把梭，写到 `./downloads`，不走沙箱。保留给人类用户的现有工作流
-- `xld organize`：按用户名归档已下载文件。Agent 通常会按自己的逻辑（按主题、时间）组织内容，无需服务端归档
-- `xld update`：版本自更新，应由用户手动管理
+- `x_likes_downloader download`：旧版"列+下"一把梭，写到 `./downloads`，不走沙箱。保留给人类用户的现有工作流
+- `x_likes_downloader organize`：按用户名归档已下载文件。Agent 通常会按自己的逻辑（按主题、时间）组织内容，无需服务端归档
+- `x_likes_downloader update`：版本自更新，应由用户手动管理
 
 ---
 
@@ -232,6 +207,7 @@ Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `
 | 进度反馈 | `download_media` 在请求带 `_meta.progressToken` 时通过 MCP `notifications/progress` 推送；其它工具无进度 |
 | Cancellation | v2.0 收到 `notifications/cancelled` **被忽略**（仅 stderr 日志记录）；客户端如需强制终止可关闭 MCP 连接 |
 | `auth_expired` / `endpoint_stale` | Agent 应建议用户重新导出 cURL 并调用 `setup_from_curl` |
+| `binary_missing` | Agent 应将用户引导到 GitHub Releases 安装页 |
 
 ---
 
@@ -239,7 +215,7 @@ Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `
 
 - 凭据（auth_token / ct0 / bearer / personalization_id）**永远不出 MCP 通道**——`tools/call` 响应不含任何凭据字段；`setup_from_curl` 返回值仅含 path 与 written 标志
 - `download_media` 的写入路径被 sandbox 严格限定在 base dir 之内；Agent 即使尝试 `subdir = "../etc"` 也会被拒绝（返回 `sandbox_violation`）
-- 凭据存储在用户本地稳定路径（macOS: `~/Library/Application Support/xld/private_tokens.env`；Linux/Windows 类似），永远不入仓
+- 凭据存储在用户本地稳定路径（由 binary 选择，host-managed），永远不入仓
 - 使用 X 内部 GraphQL 端点理论上违反 X ToS，由用户承担合规边界
 - 本 skill 不引入主动节流，依赖现有翻页节奏；Agent 大批量调用可能触发 X 的 anti-bot
 
@@ -247,13 +223,15 @@ Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `
 
 ## 与人类 CLI 接口的关系
 
-`xld serve --mcp` 是 v2 给 Agent 用的接口；**人类用户继续可以**直接在 shell 里跑：
+`x_likes_downloader serve --mcp` 是 v2 给 Agent 用的接口；**人类用户继续可以**直接在 shell 里跑：
 
 ```bash
-xld setup --curl-file ~/curl_command.txt
-xld auth status --json | jq
-xld likes list --count 10 --json | jq '.data.tweets[] | {id, author_handle, text}'
-xld media download --items @items.json --concurrency 4
+x_likes_downloader setup --curl-file ~/curl_command.txt
+x_likes_downloader auth status --json | jq
+x_likes_downloader likes list --count 10 --json | jq '.data.tweets[] | {id, author_handle, text}'
+x_likes_downloader media download --items @items.json --concurrency 4
 ```
 
 这些 `--json` 子命令的 stdout JSON 信封契约**未变**，仍是人类调试 / shell pipeline 的首选。它们与 MCP server 共享同一份 lib 实现（`agent::list_likes` / `agent::download_media` / `agent::auth_status` / `agent::import_curl`），任何修复同时受益。
+
+> Agent 调用形态**仅限** MCP——SOT 不再描述"spawn `x_likes_downloader <subcmd> --json`"作为 Agent 路径。

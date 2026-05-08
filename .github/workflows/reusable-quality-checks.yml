@@ -48,5 +48,25 @@ jobs:
       - name: MCP server 集成 smoke 测试
         run: cargo test --test mcp_smoke
 
-      - name: 校验 skill/ 元数据 JSON（defaults.json + mcp-config.json）
-        run: bash scripts/check-skill-defaults.sh skill
+  packaging-checks:
+    name: Packaging Checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 验证 packaging 元数据 schema
+        run: bash scripts/check-packaging.sh
+
+      - name: SOT → host adapter 同步一致性
+        run: |
+          bash scripts/sync-skill.sh
+          if ! git diff --exit-code -- packaging/; then
+            echo "::error::SKILL.md 派生副本与 SOT 不一致" >&2
+            echo "请在本地运行 'bash scripts/sync-skill.sh' 后提交派生副本变更" >&2
+            exit 1
+          fi
