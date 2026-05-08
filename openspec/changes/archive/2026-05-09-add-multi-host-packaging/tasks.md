@@ -80,7 +80,7 @@
 - [x] 9.2 添加新步骤：跑 `bash scripts/sync-skill.sh` 然后 `git diff --exit-code`，diff 非空则 fail；错误信息提示运行 sync 命令
 - [x] 9.3 添加步骤：跑 `bash scripts/check-packaging.sh`
 - [x] 9.4 在 matrix 中加入 ubuntu-latest + macos-latest 两个 runner（如尚未覆盖），各跑 sync + check 步骤
-- [ ] 9.5 PR 提交后查看 GHA 运行结果，确认 CI 通过
+- [x] 9.5 PR 提交后查看 GHA 运行结果，确认 CI 通过
 
 ## 10. 文档与 release notes (Phase F)
 
@@ -98,8 +98,8 @@
 
 ## 12. PR + Codex review 循环 (Phase H)
 
-- [ ] 12.1 提交 PR，标题 "feat(packaging): multi-host plugin (Claude Code + Codex CLI + OpenClaw) + GitHub-based marketplace"
-- [ ] 12.2 跑 `/codex:review` 审查 PR；按 review 反馈逐项改；循环至 codex clear
-- [ ] 12.3 PR 描述列出 OpenClaw breaking 路径迁移、新增 4 个 slash command、Codex CLI 新支持
-- [ ] 12.4 merge 后跑 `bash scripts/version.sh 2.1.0` 升版本号 + tag v2.1.0 + push tag → 触发 GHA release.yml 构建 6 平台 binary
-- [ ] 12.5 GHA release 完成后归档此变更：`/opsx:archive add-multi-host-packaging`
+- [x] 12.1 提交 PR，标题 "feat(packaging): multi-host plugin (Claude Code + Codex CLI + OpenClaw) + GitHub-based marketplace"
+- [x] 12.2 跑 `/codex:review` 审查 PR；按 review 反馈逐项改；循环至 codex clear
+- [x] 12.3 PR 描述列出 OpenClaw breaking 路径迁移、新增 4 个 slash command、Codex CLI 新支持
+- [x] 12.4 merge 后跑 `bash scripts/version.sh 2.1.0` 升版本号 + tag v2.1.0 + push tag → 触发 GHA release.yml 构建 6 平台 binary
+- [x] 12.5 GHA release 完成后归档此变更：`/opsx:archive add-multi-host-packaging`
