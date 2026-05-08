@@ -8,10 +8,21 @@
 
 ```bash
 claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader \
-  && claude plugin install x_likes
+  && claude plugin install x_likes@x_likes_downloader
 ```
 
 > 自建 GitHub-based marketplace；无需上架第三方。`marketplace.json` 在仓库根 `.claude-plugin/marketplace.json`。
+>
+> 注意 `plugin install` 必须带 `@x_likes_downloader` 限定（marketplace 名）。
+
+### 本地开发安装（fork / PR 验证）
+
+```bash
+# Claude Code 不接受 file:// URL；用绝对路径或 ./path
+git clone https://github.com/HerbertGao/x_likes_downloader.git
+claude plugin marketplace add "$(pwd)/x_likes_downloader" \
+  && claude plugin install x_likes@x_likes_downloader
+```
 
 ---
 

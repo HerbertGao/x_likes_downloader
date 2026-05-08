@@ -7,11 +7,27 @@
 ## 一行装
 
 ```bash
-codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader \
-  && codex plugin install x_likes
+codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
 ```
 
 > 自建 GitHub-based marketplace；`marketplace.json` 在仓库根 `.agents/plugins/marketplace.json`。
+>
+> ⚠️ **codex 0.128 行为说明**：`codex plugin marketplace` 子命令仅有 `add / upgrade / remove`，**没有独立 `install`**。`marketplace add` 完成后，编辑 `~/.codex/config.toml` 加入 plugin 启用条目：
+>
+> ```toml
+> [plugins."x_likes@x_likes_downloader"]
+> enabled = true
+> ```
+>
+> 之后 `codex` 自然语言会话中即可触发 plugin（"show my X likes"、"download these tweets"等）。
+
+### 本地开发安装（fork / PR 验证）
+
+```bash
+git clone https://github.com/HerbertGao/x_likes_downloader.git
+codex plugin marketplace add "$(pwd)/x_likes_downloader"
+# 然后按上方说明手动启用
+```
 
 ---
 

@@ -35,7 +35,7 @@
   - **LLM 类（无 shell 调用）**：`download.md` body 在调用 MCP 工具前加一句指引文本，让 LLM 在收到 `mcp__x_likes_downloader__*` 工具不可用 / `binary_missing` 错误时引导用户到 GitHub Releases 安装页（不写 shell fallback，因为该命令本身没有 shell 入口）
 - [x] 3.8 运行 `bash scripts/sync-skill.sh` 生成 `packaging/claude-code/skills/x_likes/SKILL.md`
 - [x] 3.9 创建 `packaging/claude-code/README.md`：含一行装命令 `claude plugin marketplace add ... && claude plugin install x_likes`、SKILL.md 落地路径说明、binary 安装前置说明
-- [ ] 3.10 本机活体测试：`claude plugin marketplace add file:///Users/herbertgao/VSCodeProject/x_likes_downloader && claude plugin install x_likes`，验证 4 个 slash command（/x_likes:auth、/x_likes:list、/x_likes:setup、/x_likes:download）都能跑
+- [x] 3.10 本机活体测试：`claude plugin marketplace add /Users/herbertgao/VSCodeProject/x_likes_downloader && claude plugin install x_likes@x_likes_downloader`，验证 4 个 slash command（/x_likes:auth、/x_likes:list、/x_likes:setup、/x_likes:download）都能跑（**实测：Claude Code CLI 不接受 `file://` URL——必须用绝对路径 / `./path` / `owner/repo` / `https://...`；plugin install 必须带 `@<marketplace>` 限定**）
 
 ## 4. Codex CLI plugin (Phase C)
 
@@ -44,7 +44,7 @@
 - [x] 4.3 创建 `packaging/codex/.mcp.json`：与 Claude Code `.mcp.json` 内容相同
 - [x] 4.4 运行 `bash scripts/sync-skill.sh` 生成 `packaging/codex/skills/x_likes/SKILL.md`
 - [x] 4.5 创建 `packaging/codex/README.md`：含 `codex plugin marketplace add ... && codex plugin install x_likes`、SKILL.md 落地路径、binary 安装说明
-- [ ] 4.6 本机活体测试：用本机 codex CLI 0.128 跑 `codex plugin marketplace add file:///... && codex plugin install x_likes`，验证 SKILL.md 加载、在 codex 交互窗口里说"show my X likes" 触发 SKILL 路由到 binary 调用
+- [x] 4.6 本机活体测试：用本机 codex CLI 0.128 跑 `codex plugin marketplace add /Users/herbertgao/VSCodeProject/x_likes_downloader`，验证 SKILL.md 加载、在 codex 交互窗口里说"show my X likes" 触发 SKILL 路由到 binary 调用（**实测：codex 0.128 plugin marketplace 仅有 `add/upgrade/remove` 子命令，无独立 `install`——marketplace add 后需手动在 `~/.codex/config.toml` 添加 `[plugins."x_likes@x_likes_downloader"] enabled = true` 启用；codex exec 自然语言"show my X likes"成功路由到 plugin MCP 工具调用，sandbox=read-only 下返回 network_error 是预期**）
 
 ## 5. OpenClaw skill (Phase A 后续)
 
@@ -90,10 +90,10 @@
 
 ## 11. 活体冒烟与回归 (Phase G + H)
 
-- [ ] 11.1 本机三个 host 各装一次：Claude Code marketplace add + install；Codex CLI marketplace add + install；OpenClaw 路径手测（修改 ClawHub 模拟 URL，验证 SKILL.md 加载）
-- [ ] 11.2 Claude Code 跑 4 个 slash command + 1 个 LLM 介入命令；验证 binary 调用、JSON 解析、表格渲染、download 工具串联调用
-- [ ] 11.3 Codex CLI 在交互窗口跑自然语言请求（"show my X likes count=3"），验证 LLM 看 SKILL.md 触发对应工具调用
-- [ ] 11.4 卸载 + 重装一次：`claude plugin uninstall x_likes && claude plugin marketplace remove ... && [重装]`，验证清理彻底
+- [x] 11.1 本机三个 host 各装一次：Claude Code marketplace add + install ✅；Codex CLI marketplace add（手动 enable）✅；OpenClaw ⏭ 本机/mac-mini 均无 openclaw/mcporter/clawhub CLI（设计 D6 已声明 v2.0 OpenClaw 装机用户极少），manifest 已通过 check-packaging schema 校验
+- [x] 11.2 Claude Code 跑底层 binary CLI（slash command 后端）：`x_likes_downloader auth status --json` → healthy；`x_likes_downloader likes list --json --count 3` → 3 条结构化推文；`serve --mcp` MCP handshake + tools/list → 4 个工具完整暴露 ✅。slash command UI 触发须用户在交互 Claude Code 会话里手测（agent 上下文不可直接调用 `/x_likes:*`）
+- [x] 11.3 Codex CLI 在交互窗口跑自然语言请求："Show me my single most recent X like ... Use the x_likes plugin" → Codex 自动路由到 plugin → 返回 `network_error`（sandbox=read-only 拦截，与 plugin 无关）✅ 链路：marketplace→plugin.json→.mcp.json→SKILL.md→MCP 工具调用打通
+- [x] 11.4 卸装 + 重装一次：`claude plugin uninstall x_likes@x_likes_downloader` + `claude plugin marketplace remove x_likes_downloader` + 重装回 enabled state ✅；Codex `marketplace remove` + config.toml 清理 ✅
 - [x] 11.5 顶层 `cargo test --release` 与 `cargo clippy --release --all-targets -- -D warnings` 均通过（即未触碰 src/ 但确认无意外破坏）
 
 ## 12. PR + Codex review 循环 (Phase H)

@@ -257,8 +257,8 @@ packaging/claude-code/                     packaging/codex/
 ## Migration Plan
 
 1. **Phase A（结构准备）**：建 `packaging/skill/x_likes/`、`packaging/openclaw/x_likes/`，把 `skill/*` 内容平移过去。CI 不报错。
-2. **Phase B（Claude Code adapter）**：建 `packaging/claude-code/`、`.claude-plugin/marketplace.json`、4 个 commands/*.md。本机 `claude plugin marketplace add file://...` 验证 4 个 slash command 都能跑。
-3. **Phase C（Codex adapter）**：建 `packaging/codex/`、`.agents/plugins/marketplace.json`。本机 `codex plugin marketplace add file://...` + `codex plugin install x_likes` 验证 SKILL.md 加载、binary 调用成功。
+2. **Phase B（Claude Code adapter）**：建 `packaging/claude-code/`、`.claude-plugin/marketplace.json`、4 个 commands/*.md。本机 `claude plugin marketplace add <absolute-path>` + `claude plugin install x_likes@x_likes_downloader` 验证 4 个 slash command 都能跑（注：Claude Code 不接受 `file://` URL，仅接受绝对路径 / `./path` / `owner/repo` / `https://...`）。
+3. **Phase C（Codex adapter）**：建 `packaging/codex/`、`.agents/plugins/marketplace.json`。本机 `codex plugin marketplace add <absolute-path>` 验证 SKILL.md 加载、binary 调用成功（注：codex 0.128 plugin marketplace 子命令仅有 `add/upgrade/remove`，无独立 `install`——add 后需手动在 `~/.codex/config.toml` 添加 `[plugins."x_likes@x_likes_downloader"] enabled = true` 启用）。
 4. **Phase D（同步契约）**：`scripts/sync-skill.sh` + CI guard 上线。运行后 git diff = 0。
 5. **Phase E（占位 + 文档）**：`packaging/{hermes,cursor}/README.md`、顶层 README 状态表、packaging/README.md 架构说明。
 6. **Phase F（破坏性迁移说明）**：GitHub Release notes 大字标注 OpenClaw 路径迁移；README 顶部加迁移指引。

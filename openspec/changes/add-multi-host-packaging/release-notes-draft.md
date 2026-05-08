@@ -44,11 +44,13 @@ chmod +x /usr/local/bin/x_likes_downloader
 # 2. 装 host plugin
 ## Claude Code
 claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
-claude plugin install x_likes
+claude plugin install x_likes@x_likes_downloader   # 注意 @<marketplace> 限定
 
-## Codex CLI
+## Codex CLI（≥ 0.128）
 codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
-codex plugin install x_likes
+# codex 0.128 无独立 plugin install；编辑 ~/.codex/config.toml 加：
+#   [plugins."x_likes@x_likes_downloader"]
+#   enabled = true
 
 # 3. 首次使用：在浏览器从 X 复制 cURL，导入凭据
 x_likes_downloader setup --curl-file ~/curl_command.txt

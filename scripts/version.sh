@@ -151,14 +151,20 @@ update_packaging_versions() {
 
     update_sot_skill_min_version "$new_version"
 
-    # 派生副本：跑 sync-skill.sh 让 host SKILL.md 副本同步新版本号
-    if [ -x "scripts/sync-skill.sh" ]; then
+    # 派生副本：跑 sync-skill.sh 让 host SKILL.md 副本同步新版本号。
+    # 用 `-f`（文件存在）而非 `-x`（可执行）：fresh clone 或 mode 丢失场景下脚本可能没有
+    # exec 位，但我们用 `bash <path>` 调用并不依赖 exec 位；`-x` 会让 sync 静默跳过，
+    # 导致派生副本的 min_binary_version 不更新（Cursor Bugbot 报告的真实漂移路径）。
+    if [ -f "scripts/sync-skill.sh" ]; then
         if bash scripts/sync-skill.sh > /dev/null; then
             print_success "已同步 SKILL.md 派生副本"
         else
             print_error "scripts/sync-skill.sh 执行失败"
             return 1
         fi
+    else
+        print_error "scripts/sync-skill.sh 不存在，无法同步派生副本"
+        return 1
     fi
 }
 

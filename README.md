@@ -9,8 +9,8 @@
 > | 影响对象 | 变化 |
 > |---|---|
 > | **v2.0 OpenClaw 用户** | ClawHub 注册的 URL 必须从 `<repo>/skill` 改为 `<repo>/packaging/openclaw/x_likes`。binary 行为不变 |
-> | **新 Claude Code 用户** | 走自建 marketplace：`claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && claude plugin install x_likes` |
-> | **新 Codex CLI 用户** | 走自建 marketplace：`codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && codex plugin install x_likes` |
+> | **新 Claude Code 用户** | 走自建 marketplace：`claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && claude plugin install x_likes@x_likes_downloader` |
+> | **新 Codex CLI 用户** | `codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader`；codex 0.128 无独立 `plugin install`，需手动在 `~/.codex/config.toml` 加 `[plugins."x_likes@x_likes_downloader"] enabled = true` 启用 |
 > | **`cargo install` / GHA release** | 不变 |
 >
 > 详见 [`packaging/README.md`](./packaging/README.md) 与各 host adapter README。
@@ -135,11 +135,13 @@ x_likes_downloader organize --source-dir downloads --target-dir organized
 ```bash
 # Claude Code
 claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
-claude plugin install x_likes
+claude plugin install x_likes@x_likes_downloader   # 注意 @<marketplace> 限定
 
 # Codex CLI（需 codex CLI ≥ 0.128）
 codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
-codex plugin install x_likes
+# codex 0.128 无独立 plugin install；编辑 ~/.codex/config.toml 加：
+#   [plugins."x_likes@x_likes_downloader"]
+#   enabled = true
 ```
 
 Plugin **不打包** binary——先确保 `x_likes_downloader` 在 PATH 中（`cargo install` / brew tap / GHA release binary 任选）。详细见 [`packaging/skill/x_likes/README.md`](./packaging/skill/x_likes/README.md)。

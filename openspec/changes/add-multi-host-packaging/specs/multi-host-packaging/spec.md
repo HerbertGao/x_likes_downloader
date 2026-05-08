@@ -111,8 +111,8 @@ Codex CLI plugin 必须不含 slash commands（Codex 无此概念）；触发依
 
 两份 marketplace.json 必须使用户能用一行命令装好：
 
-- `claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && claude plugin install x_likes`
-- `codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && codex plugin install x_likes`
+- `claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && claude plugin install x_likes@x_likes_downloader`
+- `codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader`（codex 0.128 无独立 `plugin install` 子命令；marketplace add 后用户在 `~/.codex/config.toml` 加 `[plugins."x_likes@x_likes_downloader"] enabled = true` 启用）
 
 #### 场景:Claude Code marketplace 字段
 - **当** 解析 `.claude-plugin/marketplace.json`

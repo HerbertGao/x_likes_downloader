@@ -703,7 +703,14 @@ while IFS= read -r jf; do
     scan_forbidden_keys_json "$jf" "$FORBIDDEN_NONSOT_KEYS"
   fi
 done < <(find packaging -type f -name '*.json' | sort)
-ok "scanned $json_total JSON file(s) under packaging/ ($json_bad invalid)"
+# Don't print a green ✓ if any JSON failed parse — `err()` has already incremented the
+# error counter so the script will exit non-zero, but the visible line in CI logs would
+# otherwise read "✓ scanned N JSON file(s) (M invalid)" which is contradictory.
+if [[ $json_bad -gt 0 ]]; then
+  warn "scanned $json_total JSON file(s) under packaging/ — $json_bad invalid (see errors above)"
+else
+  ok "scanned $json_total JSON file(s) under packaging/ (all valid)"
+fi
 
 echo ""
 echo "=== Public packaging text artifacts (Markdown / YAML) ==="
