@@ -82,6 +82,18 @@ async fn mcp_server_handshake_and_tools_list() {
         "initialize must succeed; got: {init_json:?}"
     );
 
+    // serverInfo 必须是本 crate 而不是 rmcp 默认值（防止 from_build_env 拿到 rmcp 自己的 name）
+    let server_info = &init_json["result"]["serverInfo"];
+    assert_eq!(
+        server_info["name"], "x_likes_downloader",
+        "serverInfo.name must be the application crate, not rmcp; got: {server_info:?}"
+    );
+    assert_eq!(
+        server_info["version"],
+        env!("CARGO_PKG_VERSION"),
+        "serverInfo.version must match crate version; got: {server_info:?}"
+    );
+
     // 发 initialized notification + tools/list
     stdin
         .write_all(format!("{}\n", jsonrpc_initialized_notification()).as_bytes())

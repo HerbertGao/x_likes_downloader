@@ -17,8 +17,8 @@ use anyhow::Result;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, CancelledNotificationParam, Content, ErrorData as McpError, Meta,
-    ProgressNotificationParam, ProgressToken,
+    CallToolResult, CancelledNotificationParam, Content, ErrorData as McpError, Implementation,
+    Meta, ProgressNotificationParam, ProgressToken, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::NotificationContext;
 use rmcp::transport::stdio;
@@ -233,6 +233,14 @@ impl XldMcpServer {
 
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for XldMcpServer {
+    /// 用本 crate 的 `CARGO_PKG_NAME` / `CARGO_PKG_VERSION` 作为 MCP `serverInfo`，
+    /// 而不是 rmcp 默认的 `Implementation::from_build_env()`（那个拿到的是 rmcp 自己的名字/版本）。
+    fn get_info(&self) -> ServerInfo {
+        let mut info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+        info.server_info = Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        info
+    }
+
     /// V2.0: 收到 cancellation 通知时仅记录到 stderr 诊断日志，**不**中断正在跑的工具、
     /// **不**清理已写入磁盘的下载文件。客户端如需强制终止可关闭 stdin（走 EOF 优雅关闭路径）。
     /// 真实 cancellation 响应推迟到 v2.1。
