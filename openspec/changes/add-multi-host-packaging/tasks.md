@@ -63,7 +63,7 @@
 
 ## 7. Hermes 与 Cursor 占位 (Phase E)
 
-- [x] 7.1 创建 `packaging/hermes/README.md`：说明已验证 SKILL.md 跨工具兼容、实施提示（落到 `~/.hermes/skills/`）、排期 v2.2、欢迎 PR；外链同时给 nousresearch GitHub 与 Skills Hub 官方文档（实施时活体打开两个 URL，404/403 的删除并加注释）
+- [x] 7.1 创建 `packaging/hermes/README.md`（**实施期升级**：因 mac-mini 活体冒烟通过——MCP 连接 266ms + 4 工具发现 + `hermes skills install <raw-URL>` 成功安装并过 community 安全扫——Hermes 从 v2.2 占位升级为 v2.1+ active host adapter；`packaging/hermes/skills/x_likes/SKILL.md` 由 sync-skill.sh 派生；README 给出实测命令组合 + `~/.hermes/config.yaml` 手动 mcp_servers 注册步骤（hermes 0.12 CLI argparse 已知 bug 把 `--mcp` 当顶层 flag，需 YAML 直接编辑绕开）；spec / 顶层 README / packaging README 状态表同步升级）
 - [x] 7.2 创建 `packaging/cursor/README.md`：说明已验证 SKILL.md 跨工具兼容、实施提示（落到 `.cursor/skills/` 或兼容 `.claude/skills/`，可选加 `paths:` glob）、排期 v2.2、欢迎 PR；外链同时给 Cursor Skills 官方文档与活跃社区入口（实施时活体校验）
 - [x] 7.3 创建 `packaging/README.md`：架构总览（SOT + host adapter 派生）、目录约定说明、各 host 当前状态
 

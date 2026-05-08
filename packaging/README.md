@@ -31,10 +31,13 @@ packaging/
 ├── openclaw/x_likes/           ← OpenClaw skill (v2.0 skill/ 目录平移而来)
 │   ├── SKILL.md                  ← 由 sync-skill.sh 从 SOT 派生（注入 metadata.openclaw 块）
 │   ├── mcp-config.json
-│   ├── defaults.json             ← 由 sync-skill.sh 从 SOT 复制
+│   ├── defaults.json             ← 由 sync-skill.sh 从 SOT 复制（剥除 bearer_token）
 │   └── README.md
 │
-├── hermes/README.md            ← v2.2 占位
+├── hermes/                     ← Hermes adapter (v2.1+ active)
+│   ├── skills/x_likes/SKILL.md   ← 由 sync-skill.sh 从 SOT 派生（直接复制，无 host 扩展）
+│   └── README.md
+│
 ├── cursor/README.md            ← v2.2 占位
 └── README.md                   ← 本文件
 ```
@@ -56,7 +59,8 @@ packaging/
 |---|---|
 | Claude Code | 直接复制 SOT，无 host 扩展 |
 | Codex CLI | 直接复制 SOT（无 host 扩展；frontmatter 已含 `name`/`description` 即可） |
-| OpenClaw | 复制 SOT，在 frontmatter 注入 `metadata.openclaw.{bins,min_version}` 块 |
+| Hermes | 直接复制 SOT（Hermes 0.12+ 原生消费 Anthropic 风格 frontmatter） |
+| OpenClaw | 复制 SOT，在 frontmatter 注入 `metadata.openclaw.{bins,min_version}` 块；defaults.json 复制时剥除 bearer_token |
 
 工具链：bash + awk + sed + jq（GHA `ubuntu-latest` / `macos-latest` 默认自带，**不依赖 yq**）。
 
@@ -75,7 +79,7 @@ packaging/
 | Claude Code | ✅ v2.1+ | `claude-code/` |
 | Codex CLI | ✅ v2.1+ | `codex/` |
 | OpenClaw | ✅ v2.1+ 📦 v1.x+ | `openclaw/x_likes/` |
-| Hermes | 🔜 v2.2 | `hermes/` (placeholder) |
+| Hermes | ✅ v2.1+ | `hermes/` |
 | Cursor | 🔜 v2.2 | `cursor/` (placeholder) |
 
 ---

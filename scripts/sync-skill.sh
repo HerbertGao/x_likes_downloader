@@ -25,6 +25,7 @@ SOT_DEFAULTS="packaging/skill/x_likes/defaults.json"
 
 CC_SKILL="packaging/claude-code/skills/x_likes/SKILL.md"
 CODEX_SKILL="packaging/codex/skills/x_likes/SKILL.md"
+HERMES_SKILL="packaging/hermes/skills/x_likes/SKILL.md"
 OC_SKILL="packaging/openclaw/x_likes/SKILL.md"
 OC_DEFAULTS="packaging/openclaw/x_likes/defaults.json"
 
@@ -63,13 +64,17 @@ if [[ -z "$MIN_VER" ]]; then
   exit 1
 fi
 
-mkdir -p "$(dirname "$CC_SKILL")" "$(dirname "$CODEX_SKILL")" "$(dirname "$OC_SKILL")"
+mkdir -p "$(dirname "$CC_SKILL")" "$(dirname "$CODEX_SKILL")" "$(dirname "$HERMES_SKILL")" "$(dirname "$OC_SKILL")"
 
 # --- Claude Code: direct copy ---
 cp "$SOT_SKILL" "$CC_SKILL"
 
 # --- Codex: direct copy (no host extension; SKILL.md already host-agnostic) ---
 cp "$SOT_SKILL" "$CODEX_SKILL"
+
+# --- Hermes: direct copy (Hermes 0.12+ consumes Anthropic-style frontmatter natively;
+# install via `hermes skills install <raw-URL>` lands here in ~/.hermes/skills/x_likes/) ---
+cp "$SOT_SKILL" "$HERMES_SKILL"
 
 # --- OpenClaw: inject `metadata.openclaw` block at end of frontmatter ---
 # Inject these lines (idempotent: replace block if it already exists):
@@ -122,5 +127,6 @@ jq 'del(.bearer_token)' "$SOT_DEFAULTS" > "$OC_DEFAULTS"
 echo "synced SOT → host adapter copies (min_binary_version=$MIN_VER):"
 echo "  $CC_SKILL"
 echo "  $CODEX_SKILL"
+echo "  $HERMES_SKILL"
 echo "  $OC_SKILL (with metadata.openclaw block)"
 echo "  $OC_DEFAULTS"

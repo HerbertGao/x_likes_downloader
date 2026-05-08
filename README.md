@@ -125,7 +125,7 @@ x_likes_downloader organize --source-dir downloads --target-dir organized
 | Claude Code | ✅ v2.1+ | [`packaging/claude-code/`](./packaging/claude-code/) | Plugin + 4 个 `/x_likes:*` slash command + MCP server |
 | Codex CLI | ✅ v2.1+ | [`packaging/codex/`](./packaging/codex/) | Plugin（含 `interface` 富 manifest）+ MCP server，LLM 路由 |
 | OpenClaw | ✅ v2.1+ 📦 v1.x+ | [`packaging/openclaw/x_likes/`](./packaging/openclaw/x_likes/) | v2.0 用户需把 ClawHub URL 改为新路径 |
-| Hermes | 🔜 v2.2 | [`packaging/hermes/`](./packaging/hermes/) | SKILL.md 已验证兼容，host adapter 排期 v2.2 |
+| Hermes | ✅ v2.1+ | [`packaging/hermes/`](./packaging/hermes/) | SKILL.md sync-derived；`hermes skills install <raw-URL>` + 手动 YAML 加 MCP（hermes argparse 已知 bug 绕开） |
 | Cursor | 🔜 v2.2 | [`packaging/cursor/`](./packaging/cursor/) | SKILL.md 已验证兼容，host adapter 排期 v2.2 |
 
 ### 通过自建 marketplace 安装

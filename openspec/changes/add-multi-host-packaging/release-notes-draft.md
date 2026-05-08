@@ -5,10 +5,11 @@
 - 新增 **Claude Code plugin**：4 个 `/x_likes:*` slash command（auth / list / setup / download）+ MCP server 一行装 (`claude plugin marketplace add ... && claude plugin install x_likes`)
 - 新增 **Codex CLI plugin**：含富 `interface` manifest（displayName / category / capabilities / defaultPrompt / brandColor）+ MCP server，在 codex 交互窗口里说"show my X likes"自动路由
 - **OpenClaw skill 仍可用**：v1+ 用户继续工作；**packaging 路径变化**——见下方 Breaking
+- 新增 **Hermes adapter**（v2.1+ active）：SKILL.md sync-derived；`hermes skills install <raw-URL>` 一行装；MCP 通过 `~/.hermes/config.yaml` 手动加 `mcp_servers` 注册（hermes 0.12 CLI argparse 已知 bug 把 `--mcp` 当顶层 flag，YAML 编辑绕开）
 - 新增 **自建 GitHub-based marketplace**：`.claude-plugin/marketplace.json` + `.agents/plugins/marketplace.json`，无需上架第三方
-- 新增 SOT + sync 派生契约：`packaging/skill/x_likes/` 是单一可信源，三家 host 副本由 `scripts/sync-skill.sh` 同步生成；CI 通过 `git diff --exit-code` guard 防漂移
-- 顶层 README 加 **Host 适配状态表**（Claude Code / Codex CLI / OpenClaw / Hermes / Cursor）
-- Hermes / Cursor v2.2 占位文档已就位，欢迎 PR
+- 新增 SOT + sync 派生契约：`packaging/skill/x_likes/` 是单一可信源，**四份** host 副本（claude-code / codex / hermes / openclaw）由 `scripts/sync-skill.sh` 同步生成；CI 通过 `git diff --exit-code` guard 防漂移
+- 顶层 README 加 **Host 适配状态表**（Claude Code / Codex CLI / OpenClaw / Hermes 各 ✅ v2.1+；Cursor 🔜 v2.2）
+- Cursor v2.2 占位文档已就位，欢迎 PR
 
 ## Breaking changes (packaging only — binary 行为不变)
 

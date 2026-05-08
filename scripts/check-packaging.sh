@@ -522,8 +522,10 @@ REQUIRED_ARTIFACTS=(
   "packaging/codex/.mcp.json"
   "packaging/codex/skills/x_likes/SKILL.md"
   "packaging/codex/README.md"
-  # v2.2 placeholders + packaging architecture doc
+  # Hermes (v2.1+ active host adapter — SKILL.md sync-derived from SOT)
+  "packaging/hermes/skills/x_likes/SKILL.md"
   "packaging/hermes/README.md"
+  # Cursor v2.2 placeholder + packaging architecture doc
   "packaging/cursor/README.md"
   "packaging/README.md"
   # Self-hosted marketplaces
@@ -587,6 +589,7 @@ echo "=== SKILL.md derived copies ==="
 for f in \
   packaging/claude-code/skills/x_likes/SKILL.md \
   packaging/codex/skills/x_likes/SKILL.md \
+  packaging/hermes/skills/x_likes/SKILL.md \
   packaging/openclaw/x_likes/SKILL.md; do
   if [[ ! -f "$f" ]]; then
     err "$f missing — run 'bash scripts/sync-skill.sh'"

@@ -8,7 +8,7 @@
 - `packaging/claude-code/`：Claude Code plugin 实做
 - `packaging/codex/`：Codex CLI plugin 实做
 - `packaging/openclaw/x_likes/`：OpenClaw skill 实做（接收 v2.0 `skill/` 平移）
-- `packaging/hermes/`：v2.2 占位
+- `packaging/hermes/`：v2.1+ active host adapter（SKILL.md sync-derived；MCP 通过 `~/.hermes/config.yaml` 手动 `mcp_servers` 注册——hermes CLI argparse 已知 bug 把 `--mcp` 抢走）
 - `packaging/cursor/`：v2.2 占位
 - `packaging/README.md`：架构说明 + host 适配状态表
 
@@ -132,10 +132,11 @@ Codex CLI plugin 必须不含 slash commands（Codex 无此概念）；触发依
 
 ### 需求:scripts/sync-skill.sh SOT 派生契约
 
-仓库必须新增 `scripts/sync-skill.sh`，从 `packaging/skill/x_likes/SKILL.md` SOT 派生三份 host 副本：
+仓库必须新增 `scripts/sync-skill.sh`，从 `packaging/skill/x_likes/SKILL.md` SOT 派生四份 host 副本：
 
 - `packaging/claude-code/skills/x_likes/SKILL.md`：直接复制（无 host 扩展）
 - `packaging/codex/skills/x_likes/SKILL.md`：复制 + 可选注入 `metadata` 兼容块
+- `packaging/hermes/skills/x_likes/SKILL.md`：直接复制（Hermes 0.12+ 原生消费 Anthropic 风格 frontmatter，无需 host 扩展）
 - `packaging/openclaw/x_likes/SKILL.md`：复制 + 注入 `metadata.openclaw` 块（`bins` / `min_version`）
 
 脚本必须使用 GHA `ubuntu-latest` 与 `macos-latest` runner 默认自带的工具：`bash` + `awk` + `sed` + `jq`。**不允许依赖 `yq`**（GHA runner 默认不预装；多份实现行为不一致）。YAML frontmatter 处理用 `awk` 切块行级操作（不需要完整 YAML parser）；JSON 处理用 `jq`。在 macOS（BSD sed）和 Linux（GNU sed）下行为必须一致——如有 GNU/BSD 差异需用 awk 兜底。脚本必须幂等：连续运行两次后 git diff 必须为空。
@@ -180,21 +181,38 @@ Codex CLI plugin 必须不含 slash commands（Codex 无此概念）；触发依
 - **当** PR 触发 CI
 - **那么** ubuntu 与 macos 两个 runner 必须均运行 sync + check 步骤；二者结果必须一致（exit code 相等、git diff 输出相同）
 
-### 需求:Hermes 与 Cursor v2.2 占位
+### 需求:Hermes host adapter (v2.1+ active)
 
-`packaging/hermes/README.md` 与 `packaging/cursor/README.md` 必须存在，每份必须包含：
+`packaging/hermes/` 必须是 v2.1+ active host adapter，包含：
+
+- `skills/x_likes/SKILL.md`：从 SOT 派生（直接复制，无 host 扩展；Hermes 0.12+ 原生消费 Anthropic 风格 frontmatter）
+- `README.md`：含一行 `hermes skills install <raw-URL> --yes` 装命令、`~/.hermes/config.yaml` 手动 `mcp_servers` 注册步骤（hermes 0.12 CLI argparse 把 `--mcp` 当顶层 flag，`hermes mcp add` 不可用，需直接 YAML 编辑）、SKILL.md 落地路径（`~/.hermes/skills/x_likes/SKILL.md`）
+
+`packaging/hermes/skills/x_likes/SKILL.md` 必须由 `scripts/sync-skill.sh` 从 SOT 派生；不得手工编辑。
+
+#### 场景:Hermes adapter 完整
+- **当** `ls packaging/hermes/`
+- **那么** 必须看到 `skills/x_likes/SKILL.md` 与 `README.md` 两份产出
+
+#### 场景:Hermes README 含装命令
+- **当** 解析 `packaging/hermes/README.md`
+- **那么** 必须含 `hermes skills install` 命令、`~/.hermes/config.yaml` 配置示例、binary 安装前置说明
+
+### 需求:Cursor v2.2 占位
+
+`packaging/cursor/README.md` 必须存在并包含：
 
 - 说明已验证 SKILL.md 跨工具兼容（共享 frontmatter）
-- 实施提示：把 SOT 副本放到 host 期望路径 + 加 host-specific 扩展（Hermes 路径 `~/.hermes/skills/`、Cursor 加 `paths:` glob）
+- 实施提示：把 SOT 副本放到 `.cursor/skills/` 或兼容 `.claude/skills/`，可选加 `paths:` glob
 - 排期标注：v2.2
 - 欢迎 PR 链接
 
 #### 场景:占位 README 存在
-- **当** `ls packaging/hermes/ packaging/cursor/`
-- **那么** 必须各看到 `README.md`
+- **当** `ls packaging/cursor/`
+- **那么** 必须看到 `README.md`
 
 #### 场景:README 含必要信息
-- **当** 解析 `packaging/{hermes,cursor}/README.md`
+- **当** 解析 `packaging/cursor/README.md`
 - **那么** 必须含 "v2.2"、"SOT"、"PR" 三个关键词
 
 ### 需求:顶层 README host 适配状态矩阵
