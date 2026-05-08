@@ -17,17 +17,19 @@ pub mod x_api;
 ///
 /// Functions in this module never write to stdout/stderr by themselves. CLI
 /// entry points wrap their results in `OutputEnvelope` and inject a
-/// `ProgressSink` (stderr NDJSON or indicatif) when streaming.
+/// `ProgressSink` (`McpProgressSink` for v2 Agent, `IndicatifSink` for human CLI) when streaming.
 pub mod agent {
     pub mod auth_status;
     pub mod download_media;
     pub mod import_curl;
     pub mod list_likes;
+    pub mod mcp_server;
     pub mod types;
 
     pub use auth_status::auth_status;
     pub use download_media::download_media;
     pub use import_curl::import_curl;
     pub use list_likes::list_likes;
+    pub use mcp_server::run_serve_mcp;
     pub use types::*;
 }

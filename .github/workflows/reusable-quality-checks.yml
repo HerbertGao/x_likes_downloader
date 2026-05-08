@@ -45,5 +45,8 @@ jobs:
       - name: 单元测试
         run: cargo test --lib
 
-      - name: 校验 skill/defaults.json 不含敏感字段
-        run: bash scripts/check-skill-defaults.sh skill/defaults.json
+      - name: MCP server 集成 smoke 测试
+        run: cargo test --test mcp_smoke
+
+      - name: 校验 skill/ 元数据 JSON（defaults.json + mcp-config.json）
+        run: bash scripts/check-skill-defaults.sh skill
