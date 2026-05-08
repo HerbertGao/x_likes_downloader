@@ -17,6 +17,8 @@ Thumbs.db
 data/
 *.env
 curl_command.txt
+# 本地 MCP smoke 测试配置（含绝对路径，不入库）
+.mcp.json
 
 # Logs
 *.log
