@@ -1,18 +1,25 @@
-# X Likes Downloader Skill — 安装指引
+# X Likes Downloader Skill — 安装指引（host-agnostic）
 
 本 skill 让 AI Agent 通过自然语言访问你自己的 X 点赞列表并按需下载媒体。**整个流程在你本机完成，没有任何凭据上传到云端**。
 
 如果你在评估这个 skill 能不能装，请先看 [SKILL.md](./SKILL.md) 了解 Agent 实际能做什么。
 
+> 本目录是 SOT（single source of truth），**不**直接被任何 host 加载；具体注册步骤（marketplace 装命令、SKILL.md 落地路径）见对应 host adapter 的 README：
+> - Claude Code → [`packaging/claude-code/README.md`](../../claude-code/README.md)
+> - Codex CLI → [`packaging/codex/README.md`](../../codex/README.md)
+> - OpenClaw → [`packaging/openclaw/x_likes/README.md`](../../openclaw/x_likes/README.md)
+> - Hermes → [`packaging/hermes/README.md`](../../hermes/README.md)（v2.2 占位）
+> - Cursor → [`packaging/cursor/README.md`](../../cursor/README.md)（v2.2 占位）
+
 ---
 
-## 安装六步
+## 安装五步（host-agnostic 部分）
 
 ### 1. 安装 `x_likes_downloader` 二进制
 
-binary 实际名为 `x_likes_downloader`（与 Cargo `[[bin]]` 配置一致）。后续示例为简洁同时给"短名 `xld`"——你可以选择直接用全名，或建一个 `xld` 软链。
+binary 实际名为 `x_likes_downloader`（与 Cargo `[[bin]]` 配置一致）。
 
-从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台版本（保持 binary 名 `x_likes_downloader`）：
+从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台版本：
 
 ```bash
 # macOS Apple Silicon
@@ -31,22 +38,21 @@ sudo chmod +x /usr/local/bin/x_likes_downloader
 Invoke-WebRequest -Uri https://github.com/HerbertGao/x_likes_downloader/releases/latest/download/x_likes_downloader_windows_x86_64.exe -OutFile $env:USERPROFILE\x_likes_downloader.exe
 ```
 
-可选——加 `xld` 短名（让后续命令更短）：
+或：
 
 ```bash
-# macOS / Linux
-sudo ln -s "$(which x_likes_downloader)" /usr/local/bin/xld
-# 之后 `xld setup ...` 等命令都能用
+cargo install x_likes_downloader  # 如发布到 crates.io
+brew install HerbertGao/tap/x_likes_downloader  # 如有 tap
 ```
 
 验证：
 
 ```bash
 x_likes_downloader --version
-# 期望输出：x_likes_downloader 2.0.0 或更新
+# 期望输出：x_likes_downloader 2.1.0 或更新
 ```
 
-> 本 skill v2 要求 binary ≥ **2.0.0**（含 `serve --mcp` MCP server 子命令）。
+> 本 skill v2.1 要求 binary ≥ **2.1.0**（`SKILL.md` frontmatter 中 `min_binary_version` 字段约束）。
 
 ### 2. 从浏览器抓取 cURL
 
@@ -61,79 +67,25 @@ x_likes_downloader --version
 ### 3. 导入凭据
 
 ```bash
-xld setup --curl-file ~/curl_command.txt
+x_likes_downloader setup --curl-file ~/curl_command.txt
 ```
 
-成功输出 `初始化完成。`。这一步会把 cookie / bearer / queryId / features 全部本地化到 `data/private_tokens.env`，**不会上传到任何地方**。
+成功输出 `初始化完成。`。这一步会把 cookie / bearer / queryId / features 全部本地化到 binary 选择的稳定路径，**不会上传到任何地方**。
 
 ### 4. （可选）自定义沙箱下载目录
-
-默认下载目录：
-
-| 平台 | 路径 |
-|---|---|
-| macOS | `~/Library/Application Support/xld/downloads` |
-| Linux | `${XDG_DATA_HOME:-~/.local/share}/xld/downloads` |
-| Windows | `%LOCALAPPDATA%\xld\downloads` |
 
 如需改到其它磁盘（比如外接硬盘），重新跑 setup 时加参数：
 
 ```bash
-xld setup --curl-file ~/curl_command.txt --download-dir /Volumes/Archive/xld
+x_likes_downloader setup --curl-file ~/curl_command.txt --download-dir /Volumes/Archive/xld
 ```
 
-### 5. 注册 MCP server
+### 5. 注册到对应 host 客户端
 
-v2 的接入形态是 **MCP server**——客户端启动时以子进程形式 spawn `xld serve --mcp`，通过 stdio pipe 通信。配置一次即可。
-
-#### Claude Code
-
-在 `~/.claude/settings.json`（用户级）或项目根 `.mcp.json`（项目级）加：
-
-```jsonc
-{
-  "mcpServers": {
-    "xld": {
-      "command": "x_likes_downloader",
-      "args": ["serve", "--mcp"]
-    }
-  }
-}
-```
-
-`command` 必须是 `cargo install` 或 GitHub Releases 安装的实际 binary 名 `x_likes_downloader`。如果你想用更短的命令名 `xld`，自己软链（一次性）：
+具体步骤见各 host adapter README（链接见本文顶部）。注册之后让 Agent 调用 `auth_status` 工具验证；亦可手动跑：
 
 ```bash
-# macOS / Linux
-sudo ln -s "$(which x_likes_downloader)" /usr/local/bin/xld
-# 然后配置可改为 "command": "xld"
-```
-
-重启 Claude Code 后，`list_likes` / `download_media` / `auth_status` / `setup_from_curl` 4 个工具自动可用。
-
-#### OpenClaw
-
-通过 `mcporter` 注册（推荐）：
-
-```bash
-# 让 OpenClaw 发现并连接到本地 xld MCP server
-mcporter add xld --command xld --args "serve --mcp"
-```
-
-或手动编辑 OpenClaw 的 MCP 配置文件（具体路径见 [OpenClaw MCP 文档](https://docs.openclaw.ai/cli/mcp)），加入与上面 Claude Code 相同的配置内容。
-
-#### 其它 MCP 客户端（Hermes / Cursor / etc.）
-
-通用配置：`command = xld`、`args = ["serve", "--mcp"]`、`transport = stdio`。详见 `skill/mcp-config.json`。
-
-### 6. 验证
-
-启动 Agent 客户端后，让 Agent 调用 `auth_status` 工具——应当返回 `status: "healthy"`。
-
-或手动验证（不通过 Agent）：
-
-```bash
-xld auth status --json
+x_likes_downloader auth status --json
 ```
 
 应输出：
@@ -162,9 +114,17 @@ A: 使用 X 内部 GraphQL + cookie 严格意义上违反 X 的开发者协议�
 
 ---
 
+## 边界声明
+
+- **凭据本地化**：cookies / bearer / queryId 仅写入本机用户目录，**永不入仓**
+- **ToS**：使用 X 内部 GraphQL + cookie 理论上违反 X 开发者协议，由用户承担合规边界
+- **沙箱**：`download_media` 的写入路径被严格限定在 base dir 之内，禁止 `..` / 绝对路径
+
+---
+
 ## 进一步阅读
 
 - [SKILL.md](./SKILL.md) — Agent 工具表与 MCP 协议调用约定
-- [mcp-config.json](./mcp-config.json) — MCP server 启动配置（client 用它配置 mcpServers 段）
 - [defaults.json](./defaults.json) — 公开协议参数（兜底用，cURL 导入时被覆盖）
-- [仓库主 README](../README.md) — 人类 CLI 用法与构建说明
+- [仓库主 README](../../../README.md) — 人类 CLI 用法与构建说明
+- [`packaging/README.md`](../../README.md) — multi-host packaging 架构

@@ -1,0 +1,22 @@
+{
+  "name": "x_likes",
+  "version": "2.1.0",
+  "description": "Operate the user's own X (Twitter) Likes via natural language — list, download media, check auth health. Backed by a local x_likes_downloader MCP server.",
+  "author": {
+    "name": "HerbertGao",
+    "url": "https://github.com/HerbertGao"
+  },
+  "homepage": "https://github.com/HerbertGao/x_likes_downloader",
+  "repository": "https://github.com/HerbertGao/x_likes_downloader",
+  "license": "MIT",
+  "keywords": [
+    "x",
+    "twitter",
+    "likes",
+    "media",
+    "download",
+    "mcp"
+  ],
+  "mcpServers": "./.mcp.json",
+  "minimum_x_likes_downloader": "2.1.0"
+}

@@ -1,6 +1,19 @@
 # X Likes Downloader (Rust版本)
 
-一个用 Rust 编写的 X（Twitter）点赞推文媒体下载器：既是面向人类用户的 CLI，也是可被 AI Agent（OpenClaw / Claude Code Skill）驱动的自动化工具。**所有凭据本地化保存**，不依赖第三方 API key 或外部抓取服务。
+一个用 Rust 编写的 X（Twitter）点赞推文媒体下载器：既是面向人类用户的 CLI，也是可被多 host AI Agent（Claude Code / Codex CLI / OpenClaw / 未来 Hermes、Cursor）驱动的自动化工具。**所有凭据本地化保存**，不依赖第三方 API key 或外部抓取服务。
+
+> ## v2.0 → v2.1 迁移指引（packaging breaking）
+>
+> v2.1 把 host adapter 从单 `skill/` 目录拆分为 `packaging/` 多 host 容器：
+>
+> | 影响对象 | 变化 |
+> |---|---|
+> | **v2.0 OpenClaw 用户** | ClawHub 注册的 URL 必须从 `<repo>/skill` 改为 `<repo>/packaging/openclaw/x_likes`。binary 行为不变 |
+> | **新 Claude Code 用户** | 走自建 marketplace：`claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && claude plugin install x_likes@x_likes_downloader` |
+> | **新 Codex CLI 用户** | `codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader`；codex 0.128 无独立 `plugin install`，需手动在 `~/.codex/config.toml` 加 `[plugins."x_likes@x_likes_downloader"] enabled = true` 启用 |
+> | **`cargo install` / GHA release** | 不变 |
+>
+> 详见 [`packaging/README.md`](./packaging/README.md) 与各 host adapter README。
 
 ## 功能特性
 
@@ -96,39 +109,49 @@ x_likes_downloader organize
 x_likes_downloader organize --source-dir downloads --target-dir organized
 ```
 
-## 作为 Agent MCP server 使用（v2）
+## 作为 Agent MCP server 使用（v2.1+）
 
-本项目内置了一个 **MCP server**（[Model Context Protocol](https://modelcontextprotocol.io/)），让 AI Agent 通过自然语言操作你自己的 X 点赞列表：
+本项目内置 **MCP server**（[Model Context Protocol](https://modelcontextprotocol.io/)），让 AI Agent 通过自然语言操作你自己的 X 点赞列表：
 
 - **典型对话**："看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
-- **完整安装/配置流程**：见 [`skill/README.md`](./skill/README.md)
-- **Agent 工具表与调用约定**：见 [`skill/SKILL.md`](./skill/SKILL.md)
+- **完整安装/配置流程（host-agnostic）**：[`packaging/skill/x_likes/README.md`](./packaging/skill/x_likes/README.md)
+- **Agent 工具表与调用约定**：[`packaging/skill/x_likes/SKILL.md`](./packaging/skill/x_likes/SKILL.md)
+- **Multi-host packaging 架构**：[`packaging/README.md`](./packaging/README.md)
 
-### 快速接入（Claude Code）
+### Host 适配状态
 
-在 `~/.claude/settings.json` 或项目 `.mcp.json` 加：
+| Host | Status | Path | Notes |
+|---|---|---|---|
+| Claude Code | ✅ v2.1+ | [`packaging/claude-code/`](./packaging/claude-code/) | Plugin + 4 个 `/x_likes:*` slash command + MCP server |
+| Codex CLI | ✅ v2.1+ | [`packaging/codex/`](./packaging/codex/) | Plugin（含 `interface` 富 manifest）+ MCP server，LLM 路由 |
+| OpenClaw | ✅ v2.1+ 📦 v1.x+ | [`packaging/openclaw/x_likes/`](./packaging/openclaw/x_likes/) | v2.0 用户需把 ClawHub URL 改为新路径 |
+| Hermes | ✅ v2.1+ | [`packaging/hermes/`](./packaging/hermes/) | SKILL.md sync-derived；`hermes skills install <raw-URL>` + 手动 YAML 加 MCP（hermes argparse 已知 bug 绕开） |
+| Cursor | 🔜 v2.2 | [`packaging/cursor/`](./packaging/cursor/) | SKILL.md 已验证兼容，host adapter 排期 v2.2 |
 
-```jsonc
-{
-  "mcpServers": {
-    "xld": {
-      "command": "x_likes_downloader",
-      "args": ["serve", "--mcp"]
-    }
-  }
-}
+### 通过自建 marketplace 安装
+
+仓库根 `.claude-plugin/marketplace.json` 与 `.agents/plugins/marketplace.json` 是自托管 marketplace，无需上架第三方。
+
+```bash
+# Claude Code
+claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
+claude plugin install x_likes@x_likes_downloader   # 注意 @<marketplace> 限定
+
+# Codex CLI（需 codex CLI ≥ 0.128）
+codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
+# codex 0.128 无独立 plugin install；编辑 ~/.codex/config.toml 加：
+#   [plugins."x_likes@x_likes_downloader"]
+#   enabled = true
 ```
 
-`command` 是 `cargo install` 或 GitHub Releases 安装的实际 binary 名。如果你想用更短的名字 `xld`，自行软链：`sudo ln -s "$(which x_likes_downloader)" /usr/local/bin/xld` 后可以把 `"command"` 改成 `"xld"`。
-
-重启 Claude Code 后，4 个工具自动可用。OpenClaw / Hermes / Cursor 配置类似（参数 `serve --mcp`、transport `stdio`）。
+Plugin **不打包** binary——先确保 `x_likes_downloader` 在 PATH 中（`cargo install` / brew tap / GHA release binary 任选）。详细见 [`packaging/skill/x_likes/README.md`](./packaging/skill/x_likes/README.md)。
 
 ### 三类用户路径
 
 | 用户类型 | 入口 | 特点 |
 |---|---|---|
-| **人类 CLI**（始终可用）| `xld download / setup / organize / update / likes list / media download / auth status` | 行为对老用户向后兼容；`--json` 模式输出 JSON 信封供 shell pipeline / jq 调试 |
-| **Agent via MCP**（v2 主推）| `xld serve --mcp`（由 MCP client 自动 spawn）| MCP `tools/list` 暴露 4 个工具，原生 `notifications/progress` 进度反馈，凭据完全本地化 |
+| **人类 CLI**（始终可用）| `x_likes_downloader download / setup / organize / update / likes list / media download / auth status` | 行为对老用户向后兼容；`--json` 模式输出 JSON 信封供 shell pipeline / jq 调试 |
+| **Agent via MCP**（v2 主推）| `x_likes_downloader serve --mcp`（由 MCP client 自动 spawn）| MCP `tools/list` 暴露 4 个工具，原生 `notifications/progress` 进度反馈，凭据完全本地化 |
 | **lib 集成方** | `use x_likes_downloader::agent::*;` | 直接调 `list_likes` / `download_media` / `auth_status` / `import_curl` 异步函数 |
 
 所有路径共享同一份 lib 实现，任何 bug 修复同时受益。

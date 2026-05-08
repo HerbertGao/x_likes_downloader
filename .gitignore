@@ -18,7 +18,8 @@ data/
 *.env
 curl_command.txt
 # 本地 MCP smoke 测试配置（含绝对路径，不入库）
-.mcp.json
+# 注意：仅排除仓库根 .mcp.json，不排除 packaging/{claude-code,codex}/.mcp.json
+/.mcp.json
 
 # Logs
 *.log
