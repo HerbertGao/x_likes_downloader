@@ -433,7 +433,27 @@ impl ProgressSink for McpProgressSink {
             } => {
                 let progress = {
                     let mut s = self.state.lock().unwrap();
-                    s.in_flight.insert(index, (bytes_done, bytes_total));
+                    // Monotonic fraction guard：ItemRestart 之后（ETag mismatch /
+                    // Content-Range mismatch / 200-instead-of-206）下一次 ItemProgress
+                    // 的 bytes_done 会从 0 重新开始，若直接覆盖 in_flight 会让
+                    // current_progress 下降。比较新旧 fraction，仅当新值不低于旧值时
+                    // 才更新存储——progress 数值因此保持单调非递减；message 字段
+                    // 仍按真实 bytes_done/total 显示，让 UI 能透明看到 restart 在
+                    // 发生（"50%—1024/4096" → "50%—10/4096"，fraction 锁定但字节
+                    // 计数透明）。
+                    let new_fraction = compute_in_flight_fraction(bytes_done, bytes_total);
+                    let stored = match s.in_flight.get(&index) {
+                        Some((old_done, old_total)) => {
+                            let old_fraction = compute_in_flight_fraction(*old_done, *old_total);
+                            if new_fraction >= old_fraction {
+                                (bytes_done, bytes_total)
+                            } else {
+                                (*old_done, *old_total)
+                            }
+                        }
+                        None => (bytes_done, bytes_total),
+                    };
+                    s.in_flight.insert(index, stored);
                     s.current_progress(self.total_items)
                 };
                 let bytes_msg = match bytes_total {
