@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::error::{ErrorKind, ErrorPayload};
 use crate::sandbox;
 
-use super::etag_cache::{self, EtagCache};
+use super::etag_cache::{self, EtagCache, EtagEntry};
 use super::types::{
     DownloadError, DownloadOpts, DownloadOutput, DownloadResult, DownloadStatus, DownloadSummary,
     MediaItem, ProgressEvent, ProgressSink,
@@ -393,12 +393,13 @@ async fn fetch_with_partial_resume(
             .map(|m| m.len())
             .unwrap_or(0);
 
-        // ETag 续传探测：仅当 partial 存在且 size > 0
+        // 续传探测：仅当 partial 存在且 size > 0
         let mut want_resume = false;
         if partial_size > 0 {
-            // HEAD 拿当前 server ETag。失败时退回到全量重下（rather than fail）。
-            let head_etag_opt =
-                match cancellable_head_etag(client, user_agent, &item.url, cancel).await {
+            // HEAD 拿当前 server fingerprint（ETag + Last-Modified）。失败时退回到
+            // 全量重下（rather than fail）。
+            let head_fp =
+                match cancellable_head_fingerprint(client, user_agent, &item.url, cancel).await {
                     CancellableResult::Ok(v) => v,
                     CancellableResult::Cancelled => return FetchOutcome::Cancelled(0),
                     CancellableResult::Err(e) => {
@@ -406,7 +407,7 @@ async fn fetch_with_partial_resume(
                             "tweet {}: HEAD failed ({}); restarting from scratch",
                             item.tweet_id, e
                         );
-                        None
+                        ResourceFingerprint::default()
                     }
                 };
 
@@ -415,24 +416,39 @@ async fn fetch_with_partial_resume(
                 cache.get(&cache_key).cloned()
             });
 
-            // 续传必须**同时**满足 URL 与 ETag 双匹配。仅匹配 ETag 不够安全——
-            // ETag 只是特定资源的 validator，不同 URL 可以巧合返回同一字符串
-            // （如 weak ETag "abc" / "abc"）。仅靠 ETag 续传时，新响应字节会被
-            // append 到旧 URL 的 bytes，产生损坏的拼接文件。cache.url 存了原始 URL，
-            // 直接对比即可关闭这个 attack surface。
-            let resumable = match (head_etag_opt.as_deref(), cached.as_ref()) {
-                (Some(head_etag), Some(c)) => c.etag == head_etag && c.url == item.url,
+            // 续传判定：URL 必须严格匹配（关闭"同 final 路径不同 URL"的拼接 attack
+            // surface），并且 fingerprint 必须匹配——优先 ETag（强 validator），缺
+            // 则回退 Last-Modified（弱 validator）。两者皆缺则无法安全续传。
+            //
+            // X CDN 的 ext_tw_video / amplify_video 端点不返 ETag 但返 Last-Modified，
+            // Last-Modified fallback 让这些场景也能 Range resume。
+            let resumable = match cached.as_ref() {
+                Some(c) if c.url == item.url => fingerprint_matches(&head_fp, c),
                 _ => false,
             };
             if resumable {
                 want_resume = true;
             } else {
-                let reason: &'static str = match (head_etag_opt.as_deref(), cached.as_ref()) {
-                    (Some(_), Some(c)) if c.url != item.url => {
-                        "cached URL mismatch, restarting from scratch"
+                let reason: &'static str = match cached.as_ref() {
+                    Some(c) if c.url != item.url => "cached URL mismatch, restarting from scratch",
+                    Some(c) => {
+                        if c.etag.is_empty() && c.last_modified.is_none() {
+                            // cache 条目存在但无任何 fingerprint（理论上不应发生——v2.1.x
+                            // make_entry 至少要求 last_modified Some 或 etag 非空）
+                            "cached entry has no fingerprint, restarting from scratch"
+                        } else if !c.etag.is_empty() && head_fp.etag.as_deref() != Some(&c.etag) {
+                            "ETag changed, restarting from scratch"
+                        } else if c.etag.is_empty()
+                            && c.last_modified.is_some()
+                            && head_fp.last_modified != c.last_modified
+                        {
+                            "Last-Modified changed, restarting from scratch"
+                        } else {
+                            // server 没返 fingerprint（如 HEAD 失败），无 baseline 比对
+                            "no fingerprint baseline, restarting from scratch"
+                        }
                     }
-                    (Some(_), Some(_)) => "ETag changed, restarting from scratch",
-                    _ => "no ETag baseline, restarting from scratch",
+                    None => "no fingerprint baseline, restarting from scratch",
                 };
                 let _ = std::fs::remove_file(partial_path);
                 if let Some(p) = cache_path.as_ref() {
@@ -565,11 +581,19 @@ async fn fetch_with_partial_resume(
 
         // 立即写 ETag cache：收到 headers 后立刻记录 in-progress 元数据
         // （finalized=false），让被取消 / 失败的下载也留下能被下次续传利用的基线。
-        // 仅当 rename 成功后我们再写一次 finalized=true。这两个值（etag / total）
-        // 也供 rename 后的 finalize cache 写入复用，因此 lift 到外层作用域。
+        // 仅当 rename 成功后我们再写一次 finalized=true。
+        //
+        // Fingerprint 选取：优先 ETag（如有），缺则用 Last-Modified 作为弱 validator
+        // fallback——X CDN 不返 ETag 但返 Last-Modified，无 fallback 则 cache 永远空、
+        // Range resume 在 X CDN 不工作。两者都缺时无 baseline，跳过 cache write。
         let response_etag = response
             .headers()
             .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let response_last_modified = response
+            .headers()
+            .get(reqwest::header::LAST_MODIFIED)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string());
         let total_for_cache = server_total.or_else(|| {
@@ -579,12 +603,19 @@ async fn fetch_with_partial_resume(
                 response.content_length()
             }
         });
+        let cache_etag_value = response_etag.clone().unwrap_or_default();
+        let has_fingerprint = response_etag.is_some() || response_last_modified.is_some();
         if let Some(p) = cache_path.as_ref() {
-            if let (Some(etag), Some(size)) = (response_etag.as_deref(), total_for_cache) {
+            if let (true, Some(size)) = (has_fingerprint, total_for_cache) {
                 if let Err(e) = etag_cache::put_entry(
                     p,
                     cache_key.clone(),
-                    EtagCache::make_entry(etag, &item.url, size),
+                    EtagCache::make_entry(
+                        cache_etag_value.clone(),
+                        &item.url,
+                        size,
+                        response_last_modified.clone(),
+                    ),
                 ) {
                     eprintln!(
                         "etag_cache: put_entry failed for {:?}: {} (path={:?})",
@@ -593,7 +624,9 @@ async fn fetch_with_partial_resume(
                 }
             }
         }
-        let response_etag_for_finalize = response_etag;
+        let cache_etag_for_finalize = cache_etag_value;
+        let cache_last_modified_for_finalize = response_last_modified;
+        let cache_has_fingerprint_for_finalize = has_fingerprint;
         let total_bytes_for_finalize = total_for_cache;
 
         // 第二道 symlink 防御：download_one 顶部已检查过 partial_path，但 restart
@@ -728,13 +761,18 @@ async fn fetch_with_partial_resume(
         // 留下的元数据）。失败容忍：cache 写失败不影响下载语义——下次跑会走 HEAD
         // verify 兜底（HEAD content-length 与 meta.len() 比对）。
         if let Some(p) = cache_path.as_ref() {
-            let etag = response_etag_for_finalize.as_deref();
-            let total = total_bytes_for_finalize;
-            if let (Some(etag), Some(size)) = (etag, total) {
+            if let (true, Some(size)) =
+                (cache_has_fingerprint_for_finalize, total_bytes_for_finalize)
+            {
                 let _ = etag_cache::put_entry(
                     p,
                     cache_key.clone(),
-                    EtagCache::make_finalized_entry(etag, &item.url, size),
+                    EtagCache::make_finalized_entry(
+                        cache_etag_for_finalize.clone(),
+                        &item.url,
+                        size,
+                        cache_last_modified_for_finalize.clone(),
+                    ),
                 );
             }
         }
@@ -835,21 +873,60 @@ async fn cancellable_head_content_length(
     }
 }
 
-async fn cancellable_head_etag(
+/// 验证 server 当前 fingerprint 与 cache 条目是否匹配，以决定续传是否安全。
+///
+/// 比对优先级（与 cache write 时存储的 fingerprint 选取一致）：
+/// 1. **ETag**：cache.etag 非空 → 必须与 server head_fp.etag 严格相等
+/// 2. **Last-Modified fallback**：cache.etag 为空但 cache.last_modified 有值 → 必须
+///    与 server head_fp.last_modified 相等
+/// 3. cache 两者皆缺 → 不能续传（make_entry 已禁止此情况，防御性返 false）
+///
+/// 任一比对失败（含 server 没返对应字段）→ 不安全，调用方走 restart-from-scratch。
+fn fingerprint_matches(head: &ResourceFingerprint, cached: &EtagEntry) -> bool {
+    if !cached.etag.is_empty() {
+        head.etag.as_deref() == Some(cached.etag.as_str())
+    } else if let Some(cached_lm) = cached.last_modified.as_deref() {
+        head.last_modified.as_deref() == Some(cached_lm)
+    } else {
+        false
+    }
+}
+
+/// 资源指纹：HEAD 探测拿到的 (etag, last_modified) 二选一或全有。
+/// 用于决定续传 baseline 是否仍有效。续传比对优先级：
+///
+/// 1. ETag（强 validator，精确）
+/// 2. Last-Modified（弱 validator，秒级精度，X CDN 等不返 ETag 的端点 fallback）
+///
+/// 两者都缺时无法安全续传——caller 应当走 restart-from-scratch。
+#[derive(Debug, Clone, Default)]
+struct ResourceFingerprint {
+    etag: Option<String>,
+    last_modified: Option<String>,
+}
+
+async fn cancellable_head_fingerprint(
     client: &reqwest::Client,
     user_agent: &str,
     url: &str,
     cancel: Option<&CancellationToken>,
-) -> CancellableResult<Option<String>, reqwest::Error> {
+) -> CancellableResult<ResourceFingerprint, reqwest::Error> {
     let req = client.head(url).header("User-Agent", user_agent);
     let fut = async move {
         let resp = req.send().await?;
-        Ok::<Option<String>, reqwest::Error>(
-            resp.headers()
-                .get(reqwest::header::ETAG)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string()),
-        )
+        let headers = resp.headers();
+        let etag = headers
+            .get(reqwest::header::ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let last_modified = headers
+            .get(reqwest::header::LAST_MODIFIED)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        Ok::<ResourceFingerprint, reqwest::Error>(ResourceFingerprint {
+            etag,
+            last_modified,
+        })
     };
     if let Some(c) = cancel {
         tokio::select! {

@@ -118,15 +118,40 @@ download flow:
 
 **理由**：
 
-- ETag 是 HTTP 协议级别的"内容指纹"；X CDN 几乎都给（实测 100%）
+- ETag 是 HTTP 协议级别的"内容指纹"
 - xattr 跨平台不一致（Windows、APFS、ext4 各行为）；用 sidecar JSON 文件简单且可移植
 - ETag cache 在用户 cache dir（`~/Library/Caches/x_likes_downloader/` macOS、`~/.cache/x_likes_downloader/` Linux 等）；每条目 < 1KB
 - 206 是续传成功；200 是 server 给了完整响应（说明它不支持 Range 或忽略了我们的请求），需要从头来；其他状态走错误路径
 - ETag 失配 silent re-download：用户只关心拿到能播的文件，不关心是不是同一份；progress message 提供诊断
 
+**v2.1.x 修正：Last-Modified fallback（实测发现）**：
+
+v2.1 实施期间的活体冒烟（X 真实大视频）暴露了 D3 的关键假设错误——**X CDN 实际不返 ETag header**：
+
+```
+$ curl -sI https://video.twimg.com/ext_tw_video/.../*.mp4
+HTTP/2 200
+last-modified: Mon, 30 Jan 2023 15:31:44 GMT
+accept-ranges: bytes
+content-length: 15549134
+（无 etag header）
+```
+
+`ext_tw_video` 与 `amplify_video` 两类端点都只返 `last-modified`。仅依赖 ETag 的设计让 cache write 永不触发，Range resume 在 X CDN 上**完全失效**。
+
+**修正设计**：fingerprint 优先级
+
+1. **ETag**（强 validator，精确）：cache.etag 非空 → 续传需 server head ETag 与之严格相等
+2. **Last-Modified fallback**（弱 validator，秒级精度）：cache.etag 为空但 cache.last_modified 有值 → 续传需 server head Last-Modified 与之相等
+3. 两者皆缺 → 不能续传
+
+cache 写入条件：`Σ in_flight fingerprint != ∅`（ETag 或 Last-Modified 任一存在）。
+
+**Last-Modified 的精度风险与缓解**：原 D3 否决 Last-Modified 的理由"秒级精度，CDN 改一次就更新但内容可能没变"在续传场景下**反向有利**——更新即使内容相同也走重头下，是 false negative 不是 false positive；不会产生拼接坏文件，仅是浪费一次带宽。strong ETag 仍优先使用，Last-Modified 只在 ETag 缺失时启用。
+
 **替代方案**：
 
-- **Last-Modified 替代 ETag**：被否决——精度低（秒级），CDN 改一次就更新但内容可能没变
+- ~~Last-Modified 替代 ETag~~：v2.1.x 已采纳为 fallback（不替代）
 - **xattr 存 ETag**：被否决——跨平台不一致
 - **不做 ETag 校验，盲续传**：被否决——CDN 改文件后续传得到拼接坏文件
 - **Content-Length 校验代替 ETag**：被否决——长度相同不代表内容相同

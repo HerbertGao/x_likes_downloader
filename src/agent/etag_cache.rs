@@ -34,6 +34,9 @@ const CACHE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EtagEntry {
+    /// Server 强 ETag header value（如 `"abc123"`），含双引号。
+    /// 当 server 不返 ETag 时为空字符串——此时 [`Self::last_modified`] 作为续传
+    /// 指纹的回退（fingerprint 优先级：ETag > Last-Modified）。
     pub etag: String,
     pub url: String,
     /// Server 资源完整大小（HTTP Content-Length 或 Content-Range Total）。
@@ -44,7 +47,7 @@ pub struct EtagEntry {
     ///
     /// - `false`（默认）：headers 阶段写入的 in-progress 元数据。SkippedExisting
     ///   fast-path **不**能信任此条目——下载可能仍在进行 / 已中断 / 已失败。
-    ///   resume 路径仍可用（etag/url/size 一致即可续传）
+    ///   resume 路径仍可用（fingerprint+url+size 一致即可续传）
     /// - `true`：rename partial→final 成功后写入。fast-path skip 可信任此条目代表
     ///   一个完整的 v2.1+ 下载文件。
     ///
@@ -52,6 +55,13 @@ pub struct EtagEntry {
     /// verify，与升级路径行为一致。
     #[serde(default)]
     pub finalized: bool,
+    /// Server `Last-Modified` header value（如 `"Mon, 30 Jan 2023 15:31:44 GMT"`）。
+    /// 当 [`Self::etag`] 为空字符串（server 不返 ETag）时作为续传指纹的回退。
+    /// X CDN 不返 ETag 的端点（ext_tw_video / amplify_video）依赖此字段实现
+    /// Range resume——HEAD 探测时与此值比对，一致才允许续传。
+    /// 老 cache 文件无此字段时 `#[serde(default)]` 兜底为 None。
+    #[serde(default)]
+    pub last_modified: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,13 +187,22 @@ impl EtagCache {
 
     /// 构造一个 entry，updated_at 设为 now。默认 `finalized = false`（in-progress 元数据）；
     /// rename 成功后 caller 应当再调一次 `make_finalized_entry` 写入 finalized=true。
-    pub fn make_entry(etag: impl Into<String>, url: impl Into<String>, size: u64) -> EtagEntry {
+    /// `etag` 为空字符串 + `last_modified = Some(...)` 是合法组合（server 不返 ETag 但
+    /// 返 Last-Modified 时使用）；两者都缺 caller 不应调用本函数（无 fingerprint，
+    /// 续传不安全）。
+    pub fn make_entry(
+        etag: impl Into<String>,
+        url: impl Into<String>,
+        size: u64,
+        last_modified: Option<String>,
+    ) -> EtagEntry {
         EtagEntry {
             etag: etag.into(),
             url: url.into(),
             size,
             updated_at: Utc::now().to_rfc3339(),
             finalized: false,
+            last_modified,
         }
     }
 
@@ -193,6 +212,7 @@ impl EtagCache {
         etag: impl Into<String>,
         url: impl Into<String>,
         size: u64,
+        last_modified: Option<String>,
     ) -> EtagEntry {
         EtagEntry {
             etag: etag.into(),
@@ -200,6 +220,7 @@ impl EtagCache {
             size,
             updated_at: Utc::now().to_rfc3339(),
             finalized: true,
+            last_modified,
         }
     }
 }
@@ -313,7 +334,7 @@ mod tests {
         let mut cache = EtagCache::default();
         cache.set(
             "abc".into(),
-            EtagCache::make_entry("\"v1\"", "https://x/1", 4096),
+            EtagCache::make_entry("\"v1\"", "https://x/1", 4096, None),
         );
         cache.save_to(&path).unwrap();
         let loaded = EtagCache::load_from(&path);
@@ -349,7 +370,7 @@ mod tests {
         put_entry(
             &path,
             key.clone(),
-            EtagCache::make_entry("\"e1\"", "https://x/1", 1024),
+            EtagCache::make_entry("\"e1\"", "https://x/1", 1024, None),
         )
         .unwrap();
         assert!(EtagCache::load_from(&path).get(&key).is_some());
@@ -364,13 +385,13 @@ mod tests {
         put_entry(
             &path,
             "k1".into(),
-            EtagCache::make_entry("\"e1\"", "https://x/1", 1),
+            EtagCache::make_entry("\"e1\"", "https://x/1", 1, None),
         )
         .unwrap();
         put_entry(
             &path,
             "k2".into(),
-            EtagCache::make_entry("\"e2\"", "https://x/2", 2),
+            EtagCache::make_entry("\"e2\"", "https://x/2", 2, None),
         )
         .unwrap();
         let cache = EtagCache::load_from(&path);
@@ -390,7 +411,12 @@ mod tests {
                 put_entry(
                     &p,
                     key,
-                    EtagCache::make_entry(format!("\"e{}\"", i), format!("https://x/{}", i), i),
+                    EtagCache::make_entry(
+                        format!("\"e{}\"", i),
+                        format!("https://x/{}", i),
+                        i,
+                        None,
+                    ),
                 )
                 .unwrap();
             }));
