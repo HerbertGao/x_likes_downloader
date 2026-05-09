@@ -35,19 +35,14 @@ static ENV_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// 锁定 HOME / XDG_CACHE_HOME 等到一个 tempdir，确保 etag-cache.json 与本测试隔离
 /// （不污染用户真实 cache）。返回的 guard 必须存活到测试结束。
 fn isolate_cache_dir(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
-    let guard = ENV_GUARD
-        .lock()
-        .unwrap_or_else(|e| e.into_inner()); // poisoned ok（前一个测试 panic）
+    let guard = ENV_GUARD.lock().unwrap_or_else(|e| e.into_inner()); // poisoned ok（前一个测试 panic）
     std::env::set_var("HOME", dir);
     std::env::set_var("XDG_CACHE_HOME", dir.join("cache"));
     // macOS 用 ~/Library/Caches；Linux 用 XDG_CACHE_HOME；Windows 用 LOCALAPPDATA
     std::env::set_var("LOCALAPPDATA", dir.join("local-appdata"));
     // 防 dotenv / private_tokens 加载
     std::env::set_var("XLD_CREDENTIALS_FILE", dir.join("dummy_creds"));
-    std::env::set_var(
-        "DOWNLOAD_SANDBOX_BASE_DIR",
-        dir.join("__sandbox_unused__"),
-    );
+    std::env::set_var("DOWNLOAD_SANDBOX_BASE_DIR", dir.join("__sandbox_unused__"));
     guard
 }
 
@@ -101,9 +96,13 @@ async fn fresh_download_writes_to_partial_then_renames() {
     std::fs::create_dir_all(&sandbox).unwrap();
     let item = make_item("1", &format!("{}/x.bin", server.uri()), "x.bin");
 
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     // download_media 内部用 sandbox 模块 canonicalize 了 base_dir，因此 final_path
     // 含 macOS 上的 /private/tmp/... 形式（与测试本地构造的 sandbox.join() 不一致）。
@@ -182,8 +181,13 @@ async fn range_resume_206_completes() {
                     .insert_header("ETag", "\"v1\"")
                     .insert_header(
                         "Content-Range",
-                        format!("bytes {}-{}/{}", start, FILE_BYTES.len() - 1, FILE_BYTES.len())
-                            .as_str(),
+                        format!(
+                            "bytes {}-{}/{}",
+                            start,
+                            FILE_BYTES.len() - 1,
+                            FILE_BYTES.len()
+                        )
+                        .as_str(),
                     )
                     .insert_header("Content-Length", body.len().to_string())
                     .set_body_bytes(body.to_vec())
@@ -197,9 +201,13 @@ async fn range_resume_206_completes() {
         .await;
 
     let item = make_item("1", &item_url, "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     let bytes = std::fs::read(&final_path).unwrap();
     assert_eq!(bytes, FILE_BYTES, "续传后文件应当与原始一致");
@@ -253,9 +261,13 @@ async fn server_returns_200_to_range_triggers_restart() {
         .await;
 
     let item = make_item("1", &item_url, "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     let bytes = std::fs::read(&final_path).unwrap();
     assert_eq!(bytes, FILE_BYTES);
@@ -309,9 +321,13 @@ async fn etag_mismatch_triggers_restart() {
         .await;
 
     let item = make_item("1", &item_url, "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     let bytes = std::fs::read(&final_path).unwrap();
     assert_eq!(bytes, FILE_BYTES, "ETag 失配后应重新下到完整内容");
@@ -358,9 +374,13 @@ async fn no_etag_cache_entry_triggers_restart() {
         .await;
 
     let item = make_item("1", &format!("{}/x.bin", server.uri()), "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     let bytes = std::fs::read(&final_path).unwrap();
     assert_eq!(bytes, FILE_BYTES);
@@ -433,9 +453,13 @@ async fn content_range_mismatch_triggers_restart() {
         .await;
 
     let item = make_item("1", &item_url, "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     // Content-Range mismatch 后应触发 restart 并 OK
     assert_eq!(out.summary.downloaded, 1, "{:?}", out.downloads);
     let bytes = std::fs::read(&final_path).unwrap();
@@ -495,10 +519,18 @@ async fn complete_v20_final_file_skipped_after_head_verify() {
         .await;
 
     let item = make_item("1", &format!("{}/x.bin", server.uri()), "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
-    assert_eq!(out.summary.skipped, 1, "complete v2.0 file should be skipped, got: {:?}", out.downloads);
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out.summary.skipped, 1,
+        "complete v2.0 file should be skipped, got: {:?}",
+        out.downloads
+    );
     assert_eq!(out.downloads[0].status, DownloadStatus::SkippedExisting);
 }
 
@@ -523,7 +555,11 @@ async fn cached_url_mismatch_triggers_restart() {
     etag_cache::put_entry(
         &cache_path,
         EtagCache::key_for(&final_path),
-        EtagCache::make_entry("\"v1\"", "https://old-host.example/x.bin", FILE_BYTES.len() as u64),
+        EtagCache::make_entry(
+            "\"v1\"",
+            "https://old-host.example/x.bin",
+            FILE_BYTES.len() as u64,
+        ),
     )
     .unwrap();
 
@@ -550,13 +586,20 @@ async fn cached_url_mismatch_triggers_restart() {
 
     // item.url 与 cache 中记的 url 不同（即使两者 ETag 都是 "v1"）
     let item = make_item("1", &format!("{}/x.bin", server.uri()), "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     let bytes = std::fs::read(&final_path).unwrap();
     // 必须等于完整 FILE_BYTES（即从头下载），而不是 "old-bytes-from-different-host" + FILE_BYTES 拼接
-    assert_eq!(bytes, FILE_BYTES, "URL mismatch 必须重头下，不能 append 旧 partial 字节");
+    assert_eq!(
+        bytes, FILE_BYTES,
+        "URL mismatch 必须重头下，不能 append 旧 partial 字节"
+    );
     // cache 应当被 URL 匹配后的新条目覆盖
     let new_entry =
         etag_cache::peek_entry(&cache_path, &EtagCache::key_for(&final_path)).expect("cache");
@@ -604,9 +647,13 @@ async fn partial_alone_does_not_trigger_skipped_existing() {
         .await;
 
     let item = make_item("1", &format!("{}/x.bin", server.uri()), "x.bin");
-    let out = download_media(&[item], &opts_with_base(sandbox.clone()), Arc::new(NullSink))
-        .await
-        .unwrap();
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     assert_eq!(out.summary.skipped, 0);
     assert_eq!(

@@ -483,7 +483,11 @@ impl ProgressSink for McpProgressSink {
             } => {
                 // restart 仅作 message 通知；progress 数值保持不变（partial 字节作废，
                 // 下次 ItemProgress 会自然刷新 fraction）。
-                let progress = self.state.lock().unwrap().current_progress(self.total_items);
+                let progress = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .current_progress(self.total_items);
                 self.dispatch(
                     progress,
                     Some(total_items_f),
@@ -502,7 +506,11 @@ impl ProgressSink for McpProgressSink {
             }
             ProgressEvent::BatchCancelled { summary } => {
                 // cancel 路径：progress < total_items；message 必须含 "cancelled" 字样。
-                let progress = self.state.lock().unwrap().current_progress(self.total_items);
+                let progress = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .current_progress(self.total_items);
                 self.dispatch(
                     progress,
                     Some(total_items_f),

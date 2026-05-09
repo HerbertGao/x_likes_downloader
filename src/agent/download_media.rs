@@ -75,8 +75,8 @@ pub async fn download_media(
     let cancel_token = opts.cancel.clone();
 
     let owned_items: Vec<MediaItem> = items.to_vec();
-    let results: Vec<DownloadResult> = stream::iter(owned_items.into_iter().enumerate().map(
-        |(index, item)| {
+    let results: Vec<DownloadResult> =
+        stream::iter(owned_items.into_iter().enumerate().map(|(index, item)| {
             let client = client_arc.clone();
             let target_dir = target_dir_arc.clone();
             let ua = user_agent.clone();
@@ -134,11 +134,10 @@ pub async fn download_media(
                 });
                 result
             }
-        },
-    ))
-    .buffer_unordered(opts.concurrency as usize)
-    .collect()
-    .await;
+        }))
+        .buffer_unordered(opts.concurrency as usize)
+        .collect()
+        .await;
 
     let mut summary = DownloadSummary {
         total: results.len(),
@@ -266,15 +265,12 @@ async fn download_one(
                 // cache 缺失 / 不匹配 → HEAD verify。使用 cancellable 包装：
                 // 若 client 在 HEAD 慢响应期间发 cancel，必须立即返回 Cancelled，
                 // 避免 hang 至 reqwest 120s timeout。
-                match cancellable_head_content_length(client, user_agent, &item.url, cancel).await
-                {
+                match cancellable_head_content_length(client, user_agent, &item.url, cancel).await {
                     // Content-Length = 0 在 HEAD 响应上是不可靠信号——某些 server / mock
                     // 框架（如 wiremock 0.6）会把 HEAD 响应的 body strip 并重算 Content-Length
                     // 为 0，盖过 server 真正想报告的值。把 Some(0) 当作"未暴露长度"处理：
                     // 与 meta.len() > 0 已知存在的真实文件不可能匹配，盲目走 false 会误删。
-                    CancellableResult::Ok(Some(expected)) if expected > 0 => {
-                        meta.len() == expected
-                    }
+                    CancellableResult::Ok(Some(expected)) if expected > 0 => meta.len() == expected,
                     // server 不暴露 Content-Length（或暴露了 0）：保守接受现有文件
                     CancellableResult::Ok(_) => true,
                     // Cancel 触发：返回 Cancelled，partial 文件未创建
@@ -405,31 +401,23 @@ async fn fetch_with_partial_resume(
         let mut want_resume = false;
         if partial_size > 0 {
             // HEAD 拿当前 server ETag。失败时退回到全量重下（rather than fail）。
-            let head_etag_opt = match cancellable_head_etag(
-                client,
-                user_agent,
-                &item.url,
-                cancel,
-            )
-            .await
-            {
-                CancellableResult::Ok(v) => v,
-                CancellableResult::Cancelled => return FetchOutcome::Cancelled(0),
-                CancellableResult::Err(e) => {
-                    eprintln!(
-                        "tweet {}: HEAD failed ({}); restarting from scratch",
-                        item.tweet_id, e
-                    );
-                    None
-                }
-            };
+            let head_etag_opt =
+                match cancellable_head_etag(client, user_agent, &item.url, cancel).await {
+                    CancellableResult::Ok(v) => v,
+                    CancellableResult::Cancelled => return FetchOutcome::Cancelled(0),
+                    CancellableResult::Err(e) => {
+                        eprintln!(
+                            "tweet {}: HEAD failed ({}); restarting from scratch",
+                            item.tweet_id, e
+                        );
+                        None
+                    }
+                };
 
-            let cached = cache_path
-                .as_ref()
-                .and_then(|p| {
-                    let cache = EtagCache::load_from(p);
-                    cache.get(&cache_key).cloned()
-                });
+            let cached = cache_path.as_ref().and_then(|p| {
+                let cache = EtagCache::load_from(p);
+                cache.get(&cache_key).cloned()
+            });
 
             // 续传必须**同时**满足 URL 与 ETag 双匹配。仅匹配 ETag 不够安全——
             // ETag 只是特定资源的 validator，不同 URL 可以巧合返回同一字符串
@@ -490,11 +478,9 @@ async fn fetch_with_partial_resume(
             (n, 206) if n > 0 => {
                 // 校验 Content-Range
                 let cr = parse_content_range(response.headers());
-                let cached_size = cache_path.as_ref().and_then(|p| {
-                    EtagCache::load_from(p)
-                        .get(&cache_key)
-                        .map(|e| e.size)
-                });
+                let cached_size = cache_path
+                    .as_ref()
+                    .and_then(|p| EtagCache::load_from(p).get(&cache_key).map(|e| e.size));
                 let valid = match cr {
                     Some(ContentRange { start, end, total }) => {
                         let ok = start == n
@@ -1518,15 +1504,15 @@ mod tests {
             .collect();
 
         let sink = Arc::new(VecSink::new());
-        let out = download_media(&items, &opts, sink.clone())
-            .await
-            .unwrap();
+        let out = download_media(&items, &opts, sink.clone()).await.unwrap();
 
         // 全部应当是 cancelled，无任何 HTTP 请求被发出（cancel 已早于 spawn 触发）
         assert_eq!(out.summary.cancelled, 5);
         assert_eq!(out.summary.total, 5);
         assert!(
-            out.downloads.iter().all(|r| r.status == DownloadStatus::Cancelled),
+            out.downloads
+                .iter()
+                .all(|r| r.status == DownloadStatus::Cancelled),
             "expected all cancelled, got {:?}",
             out.downloads.iter().map(|r| &r.status).collect::<Vec<_>>()
         );

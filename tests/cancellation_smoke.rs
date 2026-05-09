@@ -39,10 +39,7 @@ fn isolate_cache_dir(dir: &std::path::Path) -> std::sync::MutexGuard<'static, ()
     std::env::set_var("XDG_CACHE_HOME", dir.join("cache"));
     std::env::set_var("LOCALAPPDATA", dir.join("local-appdata"));
     std::env::set_var("XLD_CREDENTIALS_FILE", dir.join("dummy_creds"));
-    std::env::set_var(
-        "DOWNLOAD_SANDBOX_BASE_DIR",
-        dir.join("__sandbox_unused__"),
-    );
+    std::env::set_var("DOWNLOAD_SANDBOX_BASE_DIR", dir.join("__sandbox_unused__"));
     guard
 }
 
@@ -211,13 +208,9 @@ async fn cancel_already_completed_item_keeps_status() {
         cancel: Some(cancel.clone()),
     };
     let url = format!("{}/x.bin", server.uri());
-    let out = download_media(
-        &[make_item("1", &url, "x.bin")],
-        &opts,
-        Arc::new(NullSink),
-    )
-    .await
-    .unwrap();
+    let out = download_media(&[make_item("1", &url, "x.bin")], &opts, Arc::new(NullSink))
+        .await
+        .unwrap();
     assert_eq!(out.summary.downloaded, 1);
     assert_eq!(out.summary.cancelled, 0);
 }
