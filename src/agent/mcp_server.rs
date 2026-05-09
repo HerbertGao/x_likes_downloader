@@ -470,19 +470,20 @@ impl ProgressSink for McpProgressSink {
                     super::types::DownloadStatus::Failed => "failed",
                     super::types::DownloadStatus::Cancelled => "cancelled",
                 };
-                // Cancelled 状态**不**递增 items_done、**不**从 in_flight 移除——
-                // 保持 monotonicity，且让 BatchCancelled progress 严格 < total（cancelled
-                // item 的最后一次 fraction 留在 sum 中，不会触达 1.0）。
-                // 非 Cancelled 状态的 remove + increment 必须**原子**——否则 concurrent
+                // 所有 ItemDone（含 Cancelled）都走相同路径：从 in_flight 移除、清掉
+                // 对应 hwm、递增 items_done。这是 spec 显式要求的——"BatchCancelled
+                // 发送时 Σ in_flight fractions == 0"。in-flight 被 cancel 的 item 的
+                // fraction 通过 items_done 整数化（不通过 in_flight 残留 fraction）反映。
+                // 边缘情况（concurrency ≥ total，全部 in-flight 被 cancel）下 items_done
+                // 会等于 total，progress 触达 total——语义上 OK：所有 item 都跑了，
+                // 只是结果是 cancelled。
+                // remove + hwm clear + increment 必须**原子**——否则 concurrent
                 // ItemProgress 可能在中间瞬间 snapshot 出过低 progress。
-                let is_cancelled = matches!(status, super::types::DownloadStatus::Cancelled);
                 let progress = {
                     let mut s = self.state.lock().unwrap();
-                    if !is_cancelled {
-                        s.in_flight.remove(&index);
-                        s.high_water_marks.remove(&index);
-                        s.items_done += 1;
-                    }
+                    s.in_flight.remove(&index);
+                    s.high_water_marks.remove(&index);
+                    s.items_done += 1;
                     s.current_progress(self.total_items)
                 };
                 self.dispatch(
