@@ -116,10 +116,8 @@ pub async fn download_media(
                 let result = download_one(
                     &client,
                     &ua,
-                    &target_dir,
                     &item,
                     &final_path,
-                    filename_format.as_deref(),
                     set_mtime,
                     sink.clone(),
                     cancel.as_ref(),
@@ -185,10 +183,8 @@ pub async fn download_media(
 async fn download_one(
     client: &reqwest::Client,
     user_agent: &str,
-    _target_dir: &Path,
     item: &MediaItem,
     final_path: &Path,
-    _filename_format: Option<&str>,
     set_mtime: bool,
     sink: Arc<dyn ProgressSink>,
     cancel: Option<&CancellationToken>,

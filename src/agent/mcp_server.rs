@@ -292,7 +292,13 @@ struct ProgressState {
     items_done: usize,
     /// in-flight item 字节级进度。key = item index（**不是** tweet_id；同一推文
     /// 可能含多个 MediaItem 共享 tweet_id，用 tweet_id 做 key 会让并发下载互相覆盖）。
+    /// value = 真实的 (bytes_done, bytes_total)——透明反映 server 当前传输位置。
     in_flight: HashMap<usize, (u64, Option<u64>)>,
+    /// 每 item 的 fraction 高水位标记。仅在 `ItemRestart` 时设置——记录 restart
+    /// 之前已达到的最高 fraction。后续 `current_progress` 计算时取 `max(current,
+    /// hwm)`，确保 progress 数值不因 restart（partial 字节作废）而下降，满足 spec
+    /// 的"progress 单调非递减"合约。`ItemDone` 时与 `in_flight` 一起清理。
+    high_water_marks: HashMap<usize, f64>,
 }
 
 impl ProgressState {
@@ -300,17 +306,23 @@ impl ProgressState {
         Self {
             items_done: 0,
             in_flight: HashMap::new(),
+            high_water_marks: HashMap::new(),
         }
     }
 
-    /// 计算当前 progress 数值 = items_done + Σ in_flight fractions，clamp 到
-    /// [0, total_items]。fraction 公式见 [`compute_in_flight_fraction`]。
+    /// 计算当前 progress 数值 = items_done + Σ max(in_flight fraction, hwm)，
+    /// clamp 到 [0, total_items]。fraction 公式见 [`compute_in_flight_fraction`]。
     fn current_progress(&self, total_items: usize) -> f64 {
         let items_done = self.items_done as f64;
         let frac_sum: f64 = self
             .in_flight
-            .values()
-            .map(|(done, total)| compute_in_flight_fraction(*done, *total))
+            .iter()
+            .map(|(idx, (done, total))| {
+                let current_frac = compute_in_flight_fraction(*done, *total);
+                self.high_water_marks
+                    .get(idx)
+                    .map_or(current_frac, |&hwm| current_frac.max(hwm))
+            })
             .sum();
         let raw = items_done + frac_sum;
         let total_f = total_items as f64;
@@ -433,27 +445,7 @@ impl ProgressSink for McpProgressSink {
             } => {
                 let progress = {
                     let mut s = self.state.lock().unwrap();
-                    // Monotonic fraction guard：ItemRestart 之后（ETag mismatch /
-                    // Content-Range mismatch / 200-instead-of-206）下一次 ItemProgress
-                    // 的 bytes_done 会从 0 重新开始，若直接覆盖 in_flight 会让
-                    // current_progress 下降。比较新旧 fraction，仅当新值不低于旧值时
-                    // 才更新存储——progress 数值因此保持单调非递减；message 字段
-                    // 仍按真实 bytes_done/total 显示，让 UI 能透明看到 restart 在
-                    // 发生（"50%—1024/4096" → "50%—10/4096"，fraction 锁定但字节
-                    // 计数透明）。
-                    let new_fraction = compute_in_flight_fraction(bytes_done, bytes_total);
-                    let stored = match s.in_flight.get(&index) {
-                        Some((old_done, old_total)) => {
-                            let old_fraction = compute_in_flight_fraction(*old_done, *old_total);
-                            if new_fraction >= old_fraction {
-                                (bytes_done, bytes_total)
-                            } else {
-                                (*old_done, *old_total)
-                            }
-                        }
-                        None => (bytes_done, bytes_total),
-                    };
-                    s.in_flight.insert(index, stored);
+                    s.in_flight.insert(index, (bytes_done, bytes_total));
                     s.current_progress(self.total_items)
                 };
                 let bytes_msg = match bytes_total {
@@ -488,6 +480,7 @@ impl ProgressSink for McpProgressSink {
                     let mut s = self.state.lock().unwrap();
                     if !is_cancelled {
                         s.in_flight.remove(&index);
+                        s.high_water_marks.remove(&index);
                         s.items_done += 1;
                     }
                     s.current_progress(self.total_items)
@@ -499,15 +492,23 @@ impl ProgressSink for McpProgressSink {
                 );
             }
             ProgressEvent::ItemRestart {
-                tweet_id, reason, ..
+                tweet_id,
+                index,
+                reason,
+                ..
             } => {
-                // restart 仅作 message 通知；progress 数值保持不变（partial 字节作废，
-                // 下次 ItemProgress 会自然刷新 fraction）。
-                let progress = self
-                    .state
-                    .lock()
-                    .unwrap()
-                    .current_progress(self.total_items);
+                // 把 restart 之前的 fraction 提升为 high water mark，确保新一轮 GET
+                // 从 bytes_done=0 开始时 current_progress 不下降——partial 字节作废
+                // 但 progress 数值层面的"已完成度估计"仍 monotonic。
+                let progress = {
+                    let mut s = self.state.lock().unwrap();
+                    if let Some(&(done, total)) = s.in_flight.get(&index) {
+                        let current_frac = compute_in_flight_fraction(done, total);
+                        let hwm = s.high_water_marks.entry(index).or_insert(0.0);
+                        *hwm = current_frac.max(*hwm);
+                    }
+                    s.current_progress(self.total_items)
+                };
                 self.dispatch(
                     progress,
                     Some(total_items_f),
