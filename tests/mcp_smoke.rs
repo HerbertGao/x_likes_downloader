@@ -169,11 +169,14 @@ async fn mcp_server_handshake_and_tools_list() {
     );
 }
 
-/// V2.0 cancellation 处理：收到 `notifications/cancelled` 后 server 必须**继续存活**
-/// （不崩溃、不断开），且后续请求仍能正常响应。这验证了 design D10 "ignore cancellation"
-/// 的实施——v2.1 才会真正让 cancellation 生效。
+/// V2.1: server 收到 `notifications/cancelled` 后必须**继续存活**（即使针对 unknown
+/// request id），且后续请求仍能正常响应。rmcp 1.6 的 `local_ct_pool` 在
+/// request id 未注册时静默忽略 cancel；server 的 `on_cancelled` 钩子仍被调用，
+/// stderr 写一行诊断日志。
+///
+/// （真实生效的 cancellation 由 `tests/cancellation_smoke.rs` 覆盖——需 wiremock。）
 #[tokio::test(flavor = "multi_thread")]
-async fn mcp_server_ignores_cancellation_notification() {
+async fn mcp_server_handles_cancellation_for_unknown_request() {
     let mut child = Command::new(BINARY_PATH)
         .args(["serve", "--mcp"])
         .stdin(Stdio::piped())
@@ -186,7 +189,6 @@ async fn mcp_server_ignores_cancellation_notification() {
     let stdout = child.stdout.take().expect("stdout");
     let mut reader = BufReader::new(stdout).lines();
 
-    // initialize 握手
     stdin
         .write_all(format!("{}\n", jsonrpc_initialize()).as_bytes())
         .await
@@ -202,7 +204,7 @@ async fn mcp_server_ignores_cancellation_notification() {
         .await
         .unwrap();
 
-    // 发一个 cancellation notification 给假的 request id（v2.0 应当被忽略）
+    // 发 cancellation notification 给一个未注册的 request id；rmcp 内部静默忽略
     stdin
         .write_all(format!("{}\n", jsonrpc_cancelled_notification(99999)).as_bytes())
         .await
@@ -214,7 +216,6 @@ async fn mcp_server_ignores_cancellation_notification() {
         .await
         .unwrap();
 
-    // 收 ping response（必须是同一 server 仍在运行——否则 stdout 就 EOF 了）
     let ping_response = loop {
         let line = timeout(Duration::from_secs(5), reader.next_line())
             .await
@@ -232,7 +233,6 @@ async fn mcp_server_ignores_cancellation_notification() {
         "ping should succeed after cancellation; got: {ping_response:?}"
     );
 
-    // 优雅关闭
     drop(stdin);
     let exit_status = timeout(Duration::from_secs(5), child.wait())
         .await

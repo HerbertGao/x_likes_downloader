@@ -78,6 +78,11 @@ pub struct DownloadOpts {
     pub filename_format: Option<String>,
     /// 是否把文件 mtime 设到 `MediaItem.created_at` 解析出的时间。默认 true。
     pub set_mtime: bool,
+    /// v2.1：可选 cancellation token。`None` 行为与 v2.0 完全等价（CLI 路径走此分支）。
+    /// `Some(token)` 时主调度循环与 chunk 循环用 `tokio::select!` 监听 `cancelled()`，
+    /// 触发后已 in-flight item 标 `DownloadStatus::Cancelled`、`.partial` 文件保留供续传；
+    /// 尚未启动 item 也标 cancelled。函数仍返回 `Ok(DownloadOutput)`（不抛 Err）。
+    pub cancel: Option<tokio_util::sync::CancellationToken>,
 }
 
 impl Default for DownloadOpts {
@@ -88,16 +93,20 @@ impl Default for DownloadOpts {
             base_dir: None,
             filename_format: None,
             set_mtime: true,
+            cancel: None,
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadStatus {
     Downloaded,
     SkippedExisting,
     Failed,
+    /// v2.1：item 在 cancellation token 触发后被中断或在等待队列中被跳过。
+    /// in-flight item 的 `.partial` 文件保留供下次 Range 续传；尚未启动 item 无文件残留。
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -123,6 +132,11 @@ pub struct DownloadSummary {
     pub downloaded: usize,
     pub skipped: usize,
     pub failed: usize,
+    /// v2.1：被 cancel 的 item 数量（含 in-flight 中断与未启动两类）。
+    /// `total == downloaded + skipped + failed + cancelled` 必须成立。
+    /// `#[serde(default)]` 让老 JSON（无该字段）反序列化为 0；新 JSON 始终含此字段。
+    #[serde(default)]
+    pub cancelled: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,16 +183,37 @@ pub enum ProgressEvent {
     },
     ItemProgress {
         tweet_id: String,
+        /// MediaItem 在原始 items 数组中的索引（v2.1+，用作 in_flight map 的 unique key——
+        /// `tweet_id` 单独不够：一条推文可能含多个 MediaItem，它们共享同一 tweet_id）。
+        #[serde(default)]
+        index: usize,
         bytes_done: u64,
         bytes_total: Option<u64>,
     },
     ItemDone {
         tweet_id: String,
+        /// 同上（v2.1+）。
+        #[serde(default)]
+        index: usize,
         status: DownloadStatus,
         bytes: u64,
     },
     DownloadFinished {
         summary: DownloadSummary,
+    },
+    /// v2.1：cancel 路径上的批次结束事件。与 `DownloadFinished` 互斥——cancel 路径**不**发
+    /// `DownloadFinished`，正常结束路径**不**发 `BatchCancelled`。
+    BatchCancelled {
+        summary: DownloadSummary,
+    },
+    /// v2.1：单 item 重启提示（如 ETag 失配、Content-Range mismatch、server 不支持 Range
+    /// 等）。仅作 progress message 通知客户端 UI；不影响 progress 数值字段。
+    ItemRestart {
+        tweet_id: String,
+        /// 同上（v2.1+）。
+        #[serde(default)]
+        index: usize,
+        reason: String,
     },
 }
 

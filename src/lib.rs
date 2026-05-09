@@ -21,6 +21,7 @@ pub mod x_api;
 pub mod agent {
     pub mod auth_status;
     pub mod download_media;
+    pub mod etag_cache;
     pub mod import_curl;
     pub mod list_likes;
     pub mod mcp_server;
