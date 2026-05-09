@@ -146,7 +146,7 @@ async fn range_resume_206_completes() {
     etag_cache::put_entry(
         &cache_path,
         EtagCache::key_for(&final_path),
-        EtagCache::make_entry("\"v1\"", item_url.clone(), FILE_BYTES.len() as u64),
+        EtagCache::make_entry("\"v1\"", item_url.clone(), FILE_BYTES.len() as u64, None),
     )
     .unwrap();
 
@@ -215,6 +215,185 @@ async fn range_resume_206_completes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn last_modified_only_resume_succeeds() {
+    // Server 不返 ETag 但返 Last-Modified（X CDN ext_tw_video / amplify_video 端点的
+    // 真实行为）。续传判定应当 fallback 到 last-modified 比对，仍能成功 Range 续传。
+    let tmp = tempdir().unwrap();
+    let _env_guard = isolate_cache_dir(tmp.path());
+
+    let sandbox = tmp.path().join("sandbox");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let sandbox = sandbox.canonicalize().unwrap();
+    let final_path = sandbox.join("1_x.bin");
+    let partial_path = PathBuf::from(format!("{}.partial", final_path.display()));
+
+    let server = MockServer::start().await;
+    let item_url = format!("{}/x.bin", server.uri());
+    let lm = "Mon, 30 Jan 2023 15:31:44 GMT";
+
+    // 预置 partial（前 30 字节）+ cache 用 etag 空 + last_modified（X CDN 场景）
+    std::fs::write(&partial_path, &FILE_BYTES[..30]).unwrap();
+    let cache_path = EtagCache::path().unwrap();
+    etag_cache::put_entry(
+        &cache_path,
+        EtagCache::key_for(&final_path),
+        EtagCache::make_entry(
+            "",
+            item_url.clone(),
+            FILE_BYTES.len() as u64,
+            Some(lm.to_string()),
+        ),
+    )
+    .unwrap();
+
+    // HEAD 不返 ETag，只返 Last-Modified
+    Mock::given(method("HEAD"))
+        .and(path("/x.bin"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Last-Modified", lm)
+                .insert_header("Content-Length", FILE_BYTES.len().to_string())
+                .set_body_bytes(vec![0u8; FILE_BYTES.len()]),
+        )
+        .mount(&server)
+        .await;
+
+    // GET with Range → 206 with Content-Range（亦不返 ETag）
+    Mock::given(method("GET"))
+        .and(path("/x.bin"))
+        .respond_with(move |req: &Request| {
+            let range_header = req
+                .headers
+                .get("range")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+            if range_header.starts_with("bytes=") {
+                let start: usize = range_header
+                    .trim_start_matches("bytes=")
+                    .trim_end_matches('-')
+                    .parse()
+                    .unwrap_or(0);
+                let body = &FILE_BYTES[start..];
+                ResponseTemplate::new(206)
+                    .insert_header("Last-Modified", "Mon, 30 Jan 2023 15:31:44 GMT")
+                    .insert_header(
+                        "Content-Range",
+                        format!(
+                            "bytes {}-{}/{}",
+                            start,
+                            FILE_BYTES.len() - 1,
+                            FILE_BYTES.len()
+                        )
+                        .as_str(),
+                    )
+                    .insert_header("Content-Length", body.len().to_string())
+                    .set_body_bytes(body.to_vec())
+            } else {
+                ResponseTemplate::new(200)
+                    .insert_header("Last-Modified", "Mon, 30 Jan 2023 15:31:44 GMT")
+                    .insert_header("Content-Length", FILE_BYTES.len().to_string())
+                    .set_body_bytes(FILE_BYTES.to_vec())
+            }
+        })
+        .mount(&server)
+        .await;
+
+    let item = make_item("1", &item_url, "x.bin");
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        out.summary.downloaded, 1,
+        "Range resume via Last-Modified fingerprint should succeed: {:?}",
+        out.downloads
+    );
+    let bytes = std::fs::read(&final_path).unwrap();
+    assert_eq!(bytes, FILE_BYTES);
+    // Cache 应当 finalize 且仍以 last_modified 作 fingerprint
+    let entry =
+        etag_cache::peek_entry(&cache_path, &EtagCache::key_for(&final_path)).expect("cache");
+    assert!(entry.finalized);
+    assert_eq!(entry.last_modified.as_deref(), Some(lm));
+    assert_eq!(entry.etag, "");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn last_modified_mismatch_triggers_restart() {
+    // 同 X CDN 场景：cache 中存的 last_modified 与 server 返的不一致 → 重头下 +
+    // 诊断 message "Last-Modified changed, restarting from scratch"
+    let tmp = tempdir().unwrap();
+    let _env_guard = isolate_cache_dir(tmp.path());
+
+    let sandbox = tmp.path().join("sandbox");
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let sandbox = sandbox.canonicalize().unwrap();
+    let final_path = sandbox.join("1_x.bin");
+    let partial_path = PathBuf::from(format!("{}.partial", final_path.display()));
+
+    let server = MockServer::start().await;
+    let item_url = format!("{}/x.bin", server.uri());
+
+    std::fs::write(&partial_path, b"old partial bytes").unwrap();
+    let cache_path = EtagCache::path().unwrap();
+    etag_cache::put_entry(
+        &cache_path,
+        EtagCache::key_for(&final_path),
+        EtagCache::make_entry(
+            "",
+            item_url.clone(),
+            FILE_BYTES.len() as u64,
+            Some("Mon, 30 Jan 2023 15:31:44 GMT".into()),
+        ),
+    )
+    .unwrap();
+
+    // server 返不同的 last-modified
+    Mock::given(method("HEAD"))
+        .and(path("/x.bin"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Last-Modified", "Tue, 01 Jan 2099 00:00:00 GMT")
+                .insert_header("Content-Length", FILE_BYTES.len().to_string())
+                .set_body_bytes(vec![0u8; FILE_BYTES.len()]),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/x.bin"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Last-Modified", "Tue, 01 Jan 2099 00:00:00 GMT")
+                .insert_header("Content-Length", FILE_BYTES.len().to_string())
+                .set_body_bytes(FILE_BYTES.to_vec()),
+        )
+        .mount(&server)
+        .await;
+
+    let item = make_item("1", &item_url, "x.bin");
+    let out = download_media(
+        &[item],
+        &opts_with_base(sandbox.clone()),
+        Arc::new(NullSink),
+    )
+    .await
+    .unwrap();
+    assert_eq!(out.summary.downloaded, 1);
+    let bytes = std::fs::read(&final_path).unwrap();
+    assert_eq!(bytes, FILE_BYTES, "Last-Modified 失配后应重新下到完整内容");
+    let entry =
+        etag_cache::peek_entry(&cache_path, &EtagCache::key_for(&final_path)).expect("cache");
+    // 新 cache 应反映新 last_modified
+    assert_eq!(
+        entry.last_modified.as_deref(),
+        Some("Tue, 01 Jan 2099 00:00:00 GMT")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn server_returns_200_to_range_triggers_restart() {
     let tmp = tempdir().unwrap();
     let _env_guard = isolate_cache_dir(tmp.path());
@@ -235,7 +414,7 @@ async fn server_returns_200_to_range_triggers_restart() {
     etag_cache::put_entry(
         &cache_path,
         EtagCache::key_for(&final_path),
-        EtagCache::make_entry("\"v1\"", item_url.clone(), FILE_BYTES.len() as u64),
+        EtagCache::make_entry("\"v1\"", item_url.clone(), FILE_BYTES.len() as u64, None),
     )
     .unwrap();
 
@@ -296,7 +475,7 @@ async fn etag_mismatch_triggers_restart() {
     etag_cache::put_entry(
         &cache_path,
         EtagCache::key_for(&final_path),
-        EtagCache::make_entry("\"v1\"", item_url.clone(), 9999),
+        EtagCache::make_entry("\"v1\"", item_url.clone(), 9999, None),
     )
     .unwrap();
 
@@ -408,7 +587,7 @@ async fn content_range_mismatch_triggers_restart() {
     etag_cache::put_entry(
         &cache_path,
         EtagCache::key_for(&final_path),
-        EtagCache::make_entry("\"v1\"", item_url.clone(), FILE_BYTES.len() as u64),
+        EtagCache::make_entry("\"v1\"", item_url.clone(), FILE_BYTES.len() as u64, None),
     )
     .unwrap();
 
@@ -559,6 +738,7 @@ async fn cached_url_mismatch_triggers_restart() {
             "\"v1\"",
             "https://old-host.example/x.bin",
             FILE_BYTES.len() as u64,
+            None,
         ),
     )
     .unwrap();
