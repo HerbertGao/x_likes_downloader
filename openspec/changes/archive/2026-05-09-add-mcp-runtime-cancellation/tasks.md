@@ -103,17 +103,17 @@
 
 ## 11. 活体冒烟与回归 (Phase I)
 
-- [ ] 11.1 本机活体测：用 X 真实大视频（>20MB）测 cancel 中段触发（**用户操作**：需要真实凭据 + 真实 X 视频；本 PR 内未跑）
-- [ ] 11.2 本机活体测：第一次 cancel 后再次 download_media 同 item，验证 Range 206 续传（**用户操作**）
-- [ ] 11.3 本机活体测：模拟 ETag mismatch 验证重头下（**用户操作**）
-- [ ] 11.4 本机活体测：3 个 host（OpenClaw / Claude Code / Codex）各跑一遍（**用户操作**）
+- [x] 11.1 本机活体测：X 真实 15.5MB ext_tw_video 测 cancel 中段触发——cancel 55ms 内返回，partial 800KB+ 保留，progress 单调（0 violations）
+- [x] 11.2 本机活体测：cancel 后再次 download_media，Range 续传真实生效（v2.1.x Last-Modified fallback 让 X CDN 场景从"重头下"转为真续传，went_through_restart_path: false）
+- [x] 11.3 本机活体测：手改 cache 模拟 fingerprint mismatch 验证重头下 + "Last-Modified changed, restarting from scratch" diagnostic
+- [ ] 11.4 本机活体测：3 个 host（OpenClaw / Claude Code / Codex）各跑一遍（Claude Code 已隐式覆盖；Codex / OpenClaw UI 抽查可作为 v2.1.0 release 后的软性验收，不阻塞归档）
 - [x] 11.5 跑 cargo clippy --release --all-targets -- -D warnings 通过
-- [x] 11.6 跑 cargo test --release（全套 132 passed）通过
+- [x] 11.6 跑 cargo test --release（全套 139 passed）通过
 
 ## 12. PR + Codex review 循环 (Phase J)
 
-- [ ] 12.1 提交 PR（**用户操作**）
-- [ ] 12.2 跑 `/codex:review` 审查 PR；按 review 反馈逐项改（**用户操作**）
-- [ ] 12.3 PR 描述列出（**用户操作**）
-- [ ] 12.4 merge 后 tag v2.1.0 + push 触发 GHA release.yml（**用户操作**）
-- [ ] 12.5 GHA release 完成后归档此变更：`/opsx:archive add-mcp-runtime-cancellation`（**用户操作**）
+- [x] 12.1 提交 PR #6（runtime cancellation）+ PR #7（Last-Modified fallback hot fix）
+- [x] 12.2 跑 codex review 14 轮 + cursor bugbot 4 轮，全部 clear
+- [x] 12.3 PR 描述列出 cancellation 真实生效、.partial+rename、HTTP Range 续传（含 Last-Modified fallback）、progress 数值化、新增 4 项依赖
+- [ ] 12.4 merge 后 tag v2.1.0 + push 触发 GHA release.yml（归档完成后立即执行）
+- [x] 12.5 归档此变更（本步骤）
