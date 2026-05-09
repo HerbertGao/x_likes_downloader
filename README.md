@@ -14,6 +14,43 @@
 > | **`cargo install` / GHA release** | 不变 |
 >
 > 详见 [`packaging/README.md`](./packaging/README.md) 与各 host adapter README。
+>
+> ## v2.1 Release Notes（runtime cancellation + Range resume + 数值化进度）
+>
+> v2.1 兑现 v2.0 design D10 留下的"v2.1 真实 cancellation"承诺，并附带修复 v2.0 的
+> `crash-leave-partial bug` 与 progress 显示停顿问题：
+>
+> - **MCP cancellation 真实生效**：`xld serve --mcp` 收到 `notifications/cancelled` 后，
+>   in-flight `download_media` 工具调用在 1 秒内停止 chunk 接收循环。返回值为
+>   `CallToolResult { isError: false }` + 完整 `DownloadOutput`（含 `cancelled` 状态的
+>   item），Agent 据此可决定是否对部分 item 重试。
+> - **`.partial` + atomic rename 协议**：所有下载流写入 `<final_path>.partial`，成功后
+>   POSIX 原子 `fs::rename` 到最终路径；失败 / cancel 保留 `.partial` 留待续传。
+>   **顺手修复 v2.0 silent bug**：crash 后半文件不再被 `skipped_existing` 沉默 skip。
+> - **HTTP Range 续传 + ETag 校验**：下载启动前检查 `.partial` 是否存在 + ETag cache
+>   是否一致；ETag 失配 / cache 缺失 / `Content-Range` mismatch 自动删 partial 重头下，
+>   并 emit 一条 progress message 诊断（`"tweet <id> ETag changed, restarting"` 等）。
+> - **进度数值化**：`progress = items_done + Σ_in_flight (bytes_done / bytes_total)`，
+>   范围仍 `[0, total_items]`、单调非递减；MCP client UI 在大文件场景下不再"卡 0%"。
+> - **新增 `DownloadStatus::Cancelled` 与 `summary.cancelled` 字段**：`#[serde(default)]`
+>   兼容老 client。
+>
+> **依赖新增**：`tokio-util 0.7`（CancellationToken）、`fs2 0.4`（ETag cache 文件锁）、
+> `sha2 0.10`（cache key sha256）、dev-only `wiremock 0.6`（mock HTTP server 测试）。
+>
+> **不变**：4 个 MCP 工具的 schema、`xld serve --mcp` 子命令、stdio transport、所有 host
+> adapter packaging 结构、CLI（`xld download` 等人类命令）行为。
+>
+> **`.partial` 文件清理**：v2.1 不实施 GC。手工清理：
+>
+> ```bash
+> # macOS / Linux：清理 sandbox 下的 .partial 残留
+> find ~/Pictures/x_likes -name "*.partial" -delete
+> # 清理 ETag cache（macOS）
+> rm -rf ~/Library/Caches/x_likes_downloader
+> # Linux
+> rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"
+> ```
 
 ## 功能特性
 
@@ -151,7 +188,7 @@ Plugin **不打包** binary——先确保 `x_likes_downloader` 在 PATH 中（`
 | 用户类型 | 入口 | 特点 |
 |---|---|---|
 | **人类 CLI**（始终可用）| `x_likes_downloader download / setup / organize / update / likes list / media download / auth status` | 行为对老用户向后兼容；`--json` 模式输出 JSON 信封供 shell pipeline / jq 调试 |
-| **Agent via MCP**（v2 主推）| `x_likes_downloader serve --mcp`（由 MCP client 自动 spawn）| MCP `tools/list` 暴露 4 个工具，原生 `notifications/progress` 进度反馈，凭据完全本地化 |
+| **Agent via MCP**（v2 主推）| `x_likes_downloader serve --mcp`（由 MCP client 自动 spawn）| MCP `tools/list` 暴露 4 个工具，原生 `notifications/progress` 进度反馈（v2.1: 数值化为 `items_done + Σ_in_flight (bytes_done / bytes_total)`，UI 实时显示百分比），凭据完全本地化。`notifications/cancelled` 在 v2.1 真实生效——in-flight 下载在 1 秒内停止，partial 文件保留供 Range 续传 |
 | **lib 集成方** | `use x_likes_downloader::agent::*;` | 直接调 `list_likes` / `download_media` / `auth_status` / `import_curl` 异步函数 |
 
 所有路径共享同一份 lib 实现，任何 bug 修复同时受益。

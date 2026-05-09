@@ -6,11 +6,15 @@
 //! - `auth_status`     ← `agent::auth_status`
 //! - `setup_from_curl` ← `agent::import_curl`
 //!
-//! Transport：仅 stdio。HTTP / SSE 在 v2.0 不支持（凭据本地化原则）。
+//! Transport：仅 stdio。HTTP / SSE 不支持（凭据本地化原则）。
 //!
-//! Cancellation：v2.0 收到 MCP `notifications/cancelled` 时仅记录到 stderr 诊断日志，
-//! **不**中断正在跑的工具。参见 design D10。
+//! Cancellation：MCP `notifications/cancelled` 真实生效——`download_media` tool
+//! handler 把 `RequestContext.ct` 透传给 lib，rmcp 1.6 在收到对应 request id 的
+//! `CancelledNotification` 时自动 cancel 该 token，让 in-flight chunk loop 在 1 秒内
+//! 停止；`.partial` 文件保留供下次 Range 续传。`on_cancelled` 钩子仅作诊断日志，
+//! 不主动调用 cancel（rmcp 内部已完成路由）。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -20,7 +24,7 @@ use rmcp::model::{
     CallToolResult, CancelledNotificationParam, Content, ErrorData as McpError, Implementation,
     Meta, ProgressNotificationParam, ProgressToken, ServerCapabilities, ServerInfo,
 };
-use rmcp::service::NotificationContext;
+use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::transport::stdio;
 use rmcp::{tool, tool_handler, tool_router, Peer, RoleServer, ServerHandler, ServiceExt};
 use schemars::JsonSchema;
@@ -123,17 +127,21 @@ impl XldMcpServer {
     /// 按 MediaItem 数组下载媒体到沙箱目录。
     #[tool(
         name = "download_media",
-        description = "把一组 MediaItem（来自 list_likes 输出的 tweets[].media[]）下载到本机沙箱目录。文件名格式 `{author_handle}_{tweet_id}_{suggested_filename}`，文件 mtime 设为推文发布时间。`subdir` 可指定沙箱内子目录（受路径穿越校验）。`concurrency` 钳位 [1,16]，默认 4。Agent 进度通过 MCP notifications/progress 推送（仅当请求带 progressToken）。"
+        description = "把一组 MediaItem（来自 list_likes 输出的 tweets[].media[]）下载到本机沙箱目录。文件名格式 `{author_handle}_{tweet_id}_{suggested_filename}`，文件 mtime 设为推文发布时间。`subdir` 可指定沙箱内子目录（受路径穿越校验）。`concurrency` 钳位 [1,16]，默认 4。Agent 进度通过 MCP notifications/progress 推送（仅当请求带 progressToken）。v2.1：收到 MCP `notifications/cancelled` 真实生效——in-flight item 在 1s 内停止，`.partial` 文件保留供下次 Range 续传；返回 isError=false + 完整 DownloadOutput（含 cancelled items）。"
     )]
     async fn download_media(
         &self,
         Parameters(req): Parameters<DownloadMediaRequest>,
         meta: Meta,
         peer: Peer<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
+        // v2.1：把 rmcp 内置的 RequestContext.ct 透传给 lib；rmcp 内部 local_ct_pool
+        // 在收到对应 request id 的 CancelledNotification 时自动 cancel ctx.ct。
         let opts = DownloadOpts {
             subdir: req.subdir,
             concurrency: req.concurrency.unwrap_or(4),
+            cancel: Some(ctx.ct.clone()),
             ..Default::default()
         };
 
@@ -157,12 +165,15 @@ impl XldMcpServer {
 
         match result {
             Ok(out) => {
-                // 镜像 CLI 端 `run_media_download` 的"全失败"逻辑：
-                // total > 0 且无任何 downloaded/skipped → MCP isError=true，
-                // 但 content 仍带完整 DownloadOutput 让 Agent 看到 per-item 失败原因。
+                // v2.1：cancel 路径仍走"成功"返回——客户端 Agent 据 isError=false 接收
+                // 完整 DownloadOutput（含 cancelled items），可决定是否对部分 item 重试。
+                // "全失败"分类沿用 v2.0 逻辑，但 cancelled 不视作失败：
+                // total > 0 且无任何 downloaded/skipped/cancelled → isError=true。
                 let total = out.summary.total;
-                let any_success = out.summary.downloaded > 0 || out.summary.skipped > 0;
-                if total > 0 && !any_success {
+                let any_progress = out.summary.downloaded > 0
+                    || out.summary.skipped > 0
+                    || out.summary.cancelled > 0;
+                if total > 0 && !any_progress {
                     let payload = ErrorPayload::new(
                         crate::error::ErrorKind::NetworkError,
                         format!("全部 {} 个 media item 下载失败", total),
@@ -241,9 +252,9 @@ impl ServerHandler for XldMcpServer {
         info
     }
 
-    /// V2.0: 收到 cancellation 通知时仅记录到 stderr 诊断日志，**不**中断正在跑的工具、
-    /// **不**清理已写入磁盘的下载文件。客户端如需强制终止可关闭 stdin（走 EOF 优雅关闭路径）。
-    /// 真实 cancellation 响应推迟到 v2.1。
+    /// V2.1：rmcp 1.6 内部 `local_ct_pool` 在调用本钩子**之前**已经把对应 request id
+    /// 的 `RequestContext.ct` cancel 了——这里不需要、也不应该自己再调 cancel。
+    /// 钩子仅作诊断日志：把 request id 与 reason 写到 stderr 让 operator 看到 cancel 是何时收到。
     async fn on_cancelled(
         &self,
         notification: CancelledNotificationParam,
@@ -251,7 +262,7 @@ impl ServerHandler for XldMcpServer {
     ) {
         let reason = notification.reason.as_deref().unwrap_or("(no reason)");
         eprintln!(
-            "xld serve --mcp: received cancellation notification for request {:?} (reason: {}); ignoring (v2.0 limitation, see design D10)",
+            "xld serve --mcp: cancellation acknowledged for request {:?} (reason: {})",
             notification.request_id, reason
         );
     }
@@ -273,6 +284,58 @@ impl ServerHandler for XldMcpServer {
 /// **Flush 保证**：tool handler 必须在返回前调用 [`flush`](Self::flush)，等 worker 把所有
 /// in-flight notification 发送完。否则 tool response 可能跟 final notification 竞争，
 /// 让 client 在收到 response 后立即关闭 stdin 时丢失 notification。
+/// 把 items_done + in_flight 合到单 mutex-protected struct，让"ItemDone 时移除
+/// in_flight + 递增 items_done"成为原子操作。两个独立 Mutex 会引入 race window：
+/// 并发下载场景下 ItemProgress 可能在"已 remove 但未 increment"的瞬间 snapshot 出
+/// 过低的 progress，违反单调合约。
+struct ProgressState {
+    items_done: usize,
+    /// in-flight item 字节级进度。key = item index（**不是** tweet_id；同一推文
+    /// 可能含多个 MediaItem 共享 tweet_id，用 tweet_id 做 key 会让并发下载互相覆盖）。
+    /// value = 真实的 (bytes_done, bytes_total)——透明反映 server 当前传输位置。
+    in_flight: HashMap<usize, (u64, Option<u64>)>,
+    /// 每 item 的 fraction 高水位标记。仅在 `ItemRestart` 时设置——记录 restart
+    /// 之前已达到的最高 fraction。后续 `current_progress` 计算时取 `max(current,
+    /// hwm)`，确保 progress 数值不因 restart（partial 字节作废）而下降，满足 spec
+    /// 的"progress 单调非递减"合约。`ItemDone` 时与 `in_flight` 一起清理。
+    high_water_marks: HashMap<usize, f64>,
+}
+
+impl ProgressState {
+    fn new() -> Self {
+        Self {
+            items_done: 0,
+            in_flight: HashMap::new(),
+            high_water_marks: HashMap::new(),
+        }
+    }
+
+    /// 计算当前 progress 数值 = items_done + Σ max(in_flight fraction, hwm)，
+    /// clamp 到 [0, total_items]。fraction 公式见 [`compute_in_flight_fraction`]。
+    fn current_progress(&self, total_items: usize) -> f64 {
+        let items_done = self.items_done as f64;
+        let frac_sum: f64 = self
+            .in_flight
+            .iter()
+            .map(|(idx, (done, total))| {
+                let current_frac = compute_in_flight_fraction(*done, *total);
+                self.high_water_marks
+                    .get(idx)
+                    .map_or(current_frac, |&hwm| current_frac.max(hwm))
+            })
+            .sum();
+        let raw = items_done + frac_sum;
+        let total_f = total_items as f64;
+        if raw < 0.0 {
+            0.0
+        } else if raw > total_f {
+            total_f
+        } else {
+            raw
+        }
+    }
+}
+
 pub struct McpProgressSink {
     progress_token: ProgressToken,
     /// `Option<>` 包装方便 `flush()` 时 take 出 sender 让 channel close → worker 退出。
@@ -281,8 +344,8 @@ pub struct McpProgressSink {
     worker: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// 记录 batch 总 item 数，与 progress 字段配对作为 total 字段。
     total_items: usize,
-    /// 跑了多少 item（item_done 时递增）。
-    items_done: std::sync::Mutex<usize>,
+    /// items_done 与 in_flight 共享单一锁，确保 ItemDone 的"remove + increment"原子。
+    state: std::sync::Mutex<ProgressState>,
 }
 
 impl McpProgressSink {
@@ -300,7 +363,7 @@ impl McpProgressSink {
             sender: std::sync::Mutex::new(Some(sender)),
             worker: std::sync::Mutex::new(Some(worker)),
             total_items,
-            items_done: std::sync::Mutex::new(0),
+            state: std::sync::Mutex::new(ProgressState::new()),
         }
     }
 
@@ -334,13 +397,23 @@ impl McpProgressSink {
     }
 }
 
+/// in-flight item 的 byte fraction 公式（D4）：
+/// - bytes_total = Some(t > 0) → `done / t`（clamp 到 1.0 防 server Content-Length 错报）
+/// - bytes_done = 0 → 0.0（还没开始）
+/// - 其它（即 bytes_total None / Some(0) 但 bytes_done > 0）→ 0.5（兜底中间值）
+fn compute_in_flight_fraction(done: u64, total: Option<u64>) -> f64 {
+    match (done, total) {
+        (_, Some(t)) if t > 0 => (done as f64 / t as f64).min(1.0),
+        (0, _) => 0.0,
+        _ => 0.5,
+    }
+}
+
 impl ProgressSink for McpProgressSink {
     fn emit(&self, event: ProgressEvent) {
         let total_items_f = self.total_items as f64;
         match event {
             ProgressEvent::DownloadStarted { total, concurrency } => {
-                // 用 self.total_items（total_items_f）作为 MCP `total` 字段的单一可信源，
-                // 与其它 ProgressEvent 路径保持一致，避免任何"事件字段 vs 构造字段"不一致风险。
                 self.dispatch(
                     0.0,
                     Some(total_items_f),
@@ -350,43 +423,97 @@ impl ProgressSink for McpProgressSink {
                     )),
                 );
             }
-            ProgressEvent::ItemStarted { tweet_id, .. } => {
-                // 关键：用 items_done 而非 index 作为 progress；
-                // 多并发时多个 ItemStarted 会先后触发但 items_done 不变，保单调。
-                let items_done = *self.items_done.lock().unwrap();
+            ProgressEvent::ItemStarted {
+                tweet_id, index, ..
+            } => {
+                let progress = {
+                    let mut s = self.state.lock().unwrap();
+                    s.in_flight.insert(index, (0, None));
+                    s.current_progress(self.total_items)
+                };
                 self.dispatch(
-                    items_done as f64,
+                    progress,
                     Some(total_items_f),
                     Some(format!("starting tweet {}", tweet_id)),
                 );
             }
             ProgressEvent::ItemProgress {
                 tweet_id,
+                index,
                 bytes_done,
                 bytes_total,
             } => {
-                // 字节级进度只反映在 message；progress 字段仍是 items_done，保单调。
-                // 多并发时若用 items_done + item_fraction，不同 in-flight item 间会回退。
-                let items_done = *self.items_done.lock().unwrap();
+                let progress = {
+                    let mut s = self.state.lock().unwrap();
+                    s.in_flight.insert(index, (bytes_done, bytes_total));
+                    s.current_progress(self.total_items)
+                };
                 let bytes_msg = match bytes_total {
                     Some(t) if t > 0 => format!("{}/{}", bytes_done, t),
                     _ => bytes_done.to_string(),
                 };
                 self.dispatch(
-                    items_done as f64,
+                    progress,
                     Some(total_items_f),
                     Some(format!("tweet {} {}", tweet_id, bytes_msg)),
                 );
             }
             ProgressEvent::ItemDone {
-                tweet_id, status, ..
+                tweet_id,
+                index,
+                status,
+                ..
             } => {
-                let mut items_done = self.items_done.lock().unwrap();
-                *items_done += 1;
+                let status_str = match status {
+                    super::types::DownloadStatus::Downloaded => "downloaded",
+                    super::types::DownloadStatus::SkippedExisting => "skipped_existing",
+                    super::types::DownloadStatus::Failed => "failed",
+                    super::types::DownloadStatus::Cancelled => "cancelled",
+                };
+                // 所有 ItemDone（含 Cancelled）都走相同路径：从 in_flight 移除、清掉
+                // 对应 hwm、递增 items_done。这是 spec 显式要求的——"BatchCancelled
+                // 发送时 Σ in_flight fractions == 0"。in-flight 被 cancel 的 item 的
+                // fraction 通过 items_done 整数化（不通过 in_flight 残留 fraction）反映。
+                // 边缘情况（concurrency ≥ total，全部 in-flight 被 cancel）下 items_done
+                // 会等于 total，progress 触达 total——语义上 OK：所有 item 都跑了，
+                // 只是结果是 cancelled。
+                // remove + hwm clear + increment 必须**原子**——否则 concurrent
+                // ItemProgress 可能在中间瞬间 snapshot 出过低 progress。
+                let progress = {
+                    let mut s = self.state.lock().unwrap();
+                    s.in_flight.remove(&index);
+                    s.high_water_marks.remove(&index);
+                    s.items_done += 1;
+                    s.current_progress(self.total_items)
+                };
                 self.dispatch(
-                    *items_done as f64,
+                    progress,
                     Some(total_items_f),
-                    Some(format!("tweet {} {:?}", tweet_id, status)),
+                    Some(format!("tweet {} {}", tweet_id, status_str)),
+                );
+            }
+            ProgressEvent::ItemRestart {
+                tweet_id,
+                index,
+                reason,
+                ..
+            } => {
+                // 把 restart 之前的 fraction 提升为 high water mark，确保新一轮 GET
+                // 从 bytes_done=0 开始时 current_progress 不下降——partial 字节作废
+                // 但 progress 数值层面的"已完成度估计"仍 monotonic。
+                let progress = {
+                    let mut s = self.state.lock().unwrap();
+                    if let Some(&(done, total)) = s.in_flight.get(&index) {
+                        let current_frac = compute_in_flight_fraction(done, total);
+                        let hwm = s.high_water_marks.entry(index).or_insert(0.0);
+                        *hwm = current_frac.max(*hwm);
+                    }
+                    s.current_progress(self.total_items)
+                };
+                self.dispatch(
+                    progress,
+                    Some(total_items_f),
+                    Some(format!("tweet {} {}", tweet_id, reason)),
                 );
             }
             ProgressEvent::DownloadFinished { summary } => {
@@ -394,8 +521,35 @@ impl ProgressSink for McpProgressSink {
                     total_items_f,
                     Some(total_items_f),
                     Some(format!(
-                        "done: downloaded={} skipped={} failed={}",
-                        summary.downloaded, summary.skipped, summary.failed
+                        "done: downloaded={} skipped={} failed={} cancelled={}",
+                        summary.downloaded, summary.skipped, summary.failed, summary.cancelled
+                    )),
+                );
+            }
+            ProgressEvent::BatchCancelled { summary } => {
+                // cancel 路径：progress 必须严格 < total_items 让 client 区分 cancelled
+                // 与 completed batch（即使所有 item 都已 ItemDone）。在 concurrency ≥
+                // total 且全部 in-flight 被 cancel 的边缘情况下 items_done 触达 total，
+                // current_progress 返回 total——此时 clamp 到 `total - 0.001` 让
+                // progress < total。spec 显式允许相邻通知 0.001 浮点 epsilon 回退
+                // （`p_{i+1} >= p_i - 0.001`），所以本次轻微回退合规；UI 上 4.999 vs
+                // 5.000 视觉一致，client 仍能正确比较 progress != total。
+                let raw = self
+                    .state
+                    .lock()
+                    .unwrap()
+                    .current_progress(self.total_items);
+                let progress = if raw >= total_items_f {
+                    (total_items_f - 0.001).max(0.0)
+                } else {
+                    raw
+                };
+                self.dispatch(
+                    progress,
+                    Some(total_items_f),
+                    Some(format!(
+                        "cancelled: downloaded={} skipped={} failed={} cancelled={}",
+                        summary.downloaded, summary.skipped, summary.failed, summary.cancelled
                     )),
                 );
             }

@@ -92,27 +92,40 @@ Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `
 | `subdir` | string | 否 | 沙箱内子目录名；不允许 `..` / 绝对路径 / 驱动器盘符 |
 | `concurrency` | number | 否 | 并发下载数；钳位 [1, 16]，默认 4 |
 
-**进度反馈（重要）**：调用方在 MCP 请求 `_meta.progressToken` 中传入 token，server 会在下载过程中通过 MCP `notifications/progress` 实时推送进度。每条 notification 含：
+**进度反馈（重要 / v2.1 数值化）**：调用方在 MCP 请求 `_meta.progressToken` 中传入 token，server 会在下载过程中通过 MCP `notifications/progress` 实时推送进度。每条 notification 含：
 
-- `progress`（数值，**绝对计数**）：**已完成的 item 数**（每完成一个 item 递增 1，绝对单调非递减）。多并发下也保证不回退
+- `progress`（浮点数，**单调非递减**）：`items_done + Σ_in_flight (bytes_done / bytes_total)`。完成的 item 贡献整数 1；in-flight item 贡献其字节比例 `[0, 1]`。范围 `[0, total_items]`，浮点容差 0.001
 - `total`（数值）：批次总 item 数，与 `progress` 配对使用——client 计算百分比 = `progress / total`
-- `message`（字符串）：当前操作描述，含字节级进度细节（如 "starting tweet 12345"、"tweet 12345 1024/4096"、"tweet 12345 Downloaded"）
+- `message`（字符串）：当前操作描述，含字节级进度细节（如 "starting tweet 12345"、"tweet 12345 1024/4096"、"tweet 12345 downloaded"）
 
-这与 [MCP 规范的 `ProgressNotificationParam`](https://modelcontextprotocol.io/specification/2025-11-25) 一致——`progress` 字段无 `[0, 1]` 范围约束，是单调递增的绝对进度数值，与 `total` 字段配对供 client 渲染百分比。完成时发出 `progress == total`（比例 1.0）。
+这与 [MCP 规范的 `ProgressNotificationParam`](https://modelcontextprotocol.io/specification/2025-11-25) 一致。完成时发出 `progress == total_items`（比例 1.0）。**v2.1 升级**：相比 v2.0 的整数 item 计数，progress 现含 in-flight item 的字节比例分量，UI 在大文件场景下不再"卡 0%"直到 100%——会连续过渡。`bytes_total = None` 时 fraction 兜底 0.5（既不卡 0 也不假装快好）。
 
-**为什么 `progress` 用 item 计数而不是字节比例**：在 `concurrency > 1` 时多个 item 并发下载，单 item 内字节比例在 item 之间会非单调（item A 跑到 80% 时切换到刚开始的 item B 会"倒退"）。让 `progress` 跟 item 计数走是保证单调性的最简方式；字节级细节仍在 `message` 字段呈现给用户。
+**v2.1 cancellation 真实生效**：MCP client 发 `notifications/cancelled` 时，对应 `download_media` 工具调用必须在 1 秒内返回。返回的 `CallToolResult` 满足：
+
+- `isError: false`（cancel **不**视作错误）
+- `content` 含完整 `DownloadOutput`：已完成 item 状态保留（`downloaded` / `skipped_existing` / `failed`），in-flight 中断 item 状态为 `cancelled`（`.partial` 文件保留供下次 Range 续传），未启动 item 状态也为 `cancelled`
+- `summary.cancelled` 字段反映被 cancel 的 item 数
+
+Agent 据此可决定**重试策略**：`cancelled` item 通常表示用户主动取消，可直接重试（lib 自动 Range 续传）；`failed` item 表示真实错误，需要根据 `error.kind` 决定是重试还是放弃。
+
+**`.partial` 文件保留行为**：v2.1 起，所有下载流写入 `<final_path>.partial`，成功后 `fs::rename` 到最终路径。失败 / cancel 保留 `.partial`：
+
+- 下次 `download_media` 同 item 时自动 HTTP HEAD 探测 ETag → 一致则发 Range 续传请求，从断点接续
+- ETag 不一致 / cache 缺失 / Content-Range mismatch 自动删除 `.partial` 重头下，并通过 progress message 提示原因
+- 用户清理：`find <sandbox> -name "*.partial" -delete`
 
 **不传 progressToken 时无进度通知**，工具调用阻塞直到所有 item 完成。
 
-**返回内容**（成功）：
+**返回内容**（成功 / cancelled 都走此路径，因 `cancelled` 不视作错误）：
 
 ```jsonc
 {
   "downloads": [
     { "tweet_id": "...", "url": "...", "path": "...", "bytes": 12345, "status": "downloaded" },
-    // ... status 可为 "downloaded" / "skipped_existing" / "failed"
+    { "tweet_id": "...", "url": "...", "path": "...", "bytes": 0, "status": "cancelled" },
+    // ... status 可为 "downloaded" / "skipped_existing" / "failed" / "cancelled"
   ],
-  "summary": { "total": 5, "downloaded": 4, "skipped": 1, "failed": 0 }
+  "summary": { "total": 5, "downloaded": 3, "skipped": 1, "failed": 0, "cancelled": 1 }
 }
 ```
 

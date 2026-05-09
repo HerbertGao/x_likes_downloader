@@ -534,6 +534,7 @@ async fn run_download_legacy() -> Result<()> {
         base_dir: Some(PathBuf::from(&config.download_dir)),
         filename_format: Some(config.file_format.clone()),
         set_mtime: true,
+        cancel: None,
     };
 
     let result = agent_download(&pending, &opts, std::sync::Arc::new(NullSink))
@@ -552,6 +553,8 @@ async fn run_download_legacy() -> Result<()> {
             x_likes_downloader::agent::types::DownloadStatus::Failed => {
                 tweets_all_failed.insert(r.tweet_id.clone());
             }
+            // CLI 路径不传 cancel token，理论上不可达；实际若发生则不计入两类聚合。
+            x_likes_downloader::agent::types::DownloadStatus::Cancelled => {}
         }
     }
     // 记录每条任何媒体都成功的 tweet
