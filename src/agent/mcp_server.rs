@@ -527,12 +527,23 @@ impl ProgressSink for McpProgressSink {
                 );
             }
             ProgressEvent::BatchCancelled { summary } => {
-                // cancel 路径：progress < total_items；message 必须含 "cancelled" 字样。
-                let progress = self
+                // cancel 路径：progress 必须严格 < total_items 让 client 区分 cancelled
+                // 与 completed batch（即使所有 item 都已 ItemDone）。在 concurrency ≥
+                // total 且全部 in-flight 被 cancel 的边缘情况下 items_done 触达 total，
+                // current_progress 返回 total——此时 clamp 到 `total - 0.001` 让
+                // progress < total。spec 显式允许相邻通知 0.001 浮点 epsilon 回退
+                // （`p_{i+1} >= p_i - 0.001`），所以本次轻微回退合规；UI 上 4.999 vs
+                // 5.000 视觉一致，client 仍能正确比较 progress != total。
+                let raw = self
                     .state
                     .lock()
                     .unwrap()
                     .current_progress(self.total_items);
+                let progress = if raw >= total_items_f {
+                    (total_items_f - 0.001).max(0.0)
+                } else {
+                    raw
+                };
                 self.dispatch(
                     progress,
                     Some(total_items_f),
