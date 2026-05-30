@@ -1,349 +1,204 @@
-# X Likes Downloader (Rust版本)
+# X Likes Downloader
 
-一个用 Rust 编写的 X（Twitter）点赞推文媒体下载器：既是面向人类用户的 CLI，也是可被多 host AI Agent（Claude Code / Codex CLI / OpenClaw / 未来 Hermes、Cursor）驱动的自动化工具。**所有凭据本地化保存**，不依赖第三方 API key 或外部抓取服务。
+用 Rust 写的 X（Twitter）点赞推文媒体下载器。两种用法：
 
-> ## v2.0 → v2.1 迁移指引（packaging breaking）
->
-> v2.1 把 host adapter 从单 `skill/` 目录拆分为 `packaging/` 多 host 容器：
->
-> | 影响对象 | 变化 |
-> |---|---|
-> | **v2.0 OpenClaw 用户** | ClawHub 注册的 URL 必须从 `<repo>/skill` 改为 `<repo>/packaging/openclaw/x_likes`。binary 行为不变 |
-> | **新 Claude Code 用户** | 走自建 marketplace：`claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader && claude plugin install x_likes@x_likes_downloader` |
-> | **新 Codex CLI 用户** | `codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader`；codex 0.128 无独立 `plugin install`，需手动在 `~/.codex/config.toml` 加 `[plugins."x_likes@x_likes_downloader"] enabled = true` 启用 |
-> | **`cargo install` / GHA release** | 不变 |
->
-> 详见 [`packaging/README.md`](./packaging/README.md) 与各 host adapter README。
->
-> ## v2.1 Release Notes（runtime cancellation + Range resume + 数值化进度）
->
-> v2.1 兑现 v2.0 design D10 留下的"v2.1 真实 cancellation"承诺，并附带修复 v2.0 的
-> `crash-leave-partial bug` 与 progress 显示停顿问题：
->
-> - **MCP cancellation 真实生效**：`xld serve --mcp` 收到 `notifications/cancelled` 后，
->   in-flight `download_media` 工具调用在 1 秒内停止 chunk 接收循环。返回值为
->   `CallToolResult { isError: false }` + 完整 `DownloadOutput`（含 `cancelled` 状态的
->   item），Agent 据此可决定是否对部分 item 重试。
-> - **`.partial` + atomic rename 协议**：所有下载流写入 `<final_path>.partial`，成功后
->   POSIX 原子 `fs::rename` 到最终路径；失败 / cancel 保留 `.partial` 留待续传。
->   **顺手修复 v2.0 silent bug**：crash 后半文件不再被 `skipped_existing` 沉默 skip。
-> - **HTTP Range 续传 + ETag 校验**：下载启动前检查 `.partial` 是否存在 + ETag cache
->   是否一致；ETag 失配 / cache 缺失 / `Content-Range` mismatch 自动删 partial 重头下，
->   并 emit 一条 progress message 诊断（`"tweet <id> ETag changed, restarting"` 等）。
-> - **进度数值化**：`progress = items_done + Σ_in_flight (bytes_done / bytes_total)`，
->   范围仍 `[0, total_items]`、单调非递减；MCP client UI 在大文件场景下不再"卡 0%"。
-> - **新增 `DownloadStatus::Cancelled` 与 `summary.cancelled` 字段**：`#[serde(default)]`
->   兼容老 client。
->
-> **依赖新增**：`tokio-util 0.7`（CancellationToken）、`fs2 0.4`（ETag cache 文件锁）、
-> `sha2 0.10`（cache key sha256）、dev-only `wiremock 0.6`（mock HTTP server 测试）。
->
-> **不变**：4 个 MCP 工具的 schema、`xld serve --mcp` 子命令、stdio transport、所有 host
-> adapter packaging 结构、CLI（`xld download` 等人类命令）行为。
->
-> **`.partial` 文件清理**：v2.1 不实施 GC。手工清理：
->
-> ```bash
-> # macOS / Linux：清理 sandbox 下的 .partial 残留
-> find ~/Pictures/x_likes -name "*.partial" -delete
-> # 清理 ETag cache（macOS）
-> rm -rf ~/Library/Caches/x_likes_downloader
-> # Linux
-> rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"
-> ```
+- **命令行工具**：一条命令把你点赞过的图片 / 视频全部下载、自动整理。
+- **AI Agent 工具（MCP）**：在 Claude Code / Codex CLI 等里用自然语言操作，比如"看我最近点赞了哪些 Rust 相关内容，把视频下回来"。
 
-## 功能特性
+> 🔐 所有凭据只存在你本机，不经过任何第三方服务或 API key。
 
-- 🔐 支持 X 内部 API，无需第三方服务
-- 📥 自动下载点赞推文中的图片和视频
-- 🔄 支持断点续传，避免重复下载
-- 📁 自动文件整理和分类
-- 🚀 异步下载，支持进度显示
-- 🌐 支持 HTTP 代理
-- 📊 详细的下载统计信息
-- 🤖 **Agent MCP server 模式**（v2）：暴露 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` 四个 MCP 工具，原生支持 progress notification
+---
 
-## 安装
+## 快速开始（命令行）
 
-### 前置要求
+### 1. 安装
 
-- Rust **1.85+**（v2.0 起，rmcp 1.x 是 edition 2024 crate；schemars 1.2.x 声明 rust-version 1.74，整体取最高）
-- 有效的X账号和登录状态
-
-### 方法一：下载预编译版本（推荐）
-
-从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台的预编译版本：
-
-- **macOS ARM64** (Apple Silicon): `x_likes_downloader_macos_arm64`
-- **macOS x86_64** (Intel): `x_likes_downloader_macos_x86_64`
-- **Linux x86_64**: `x_likes_downloader_linux_x86_64`
-- **Linux ARM64**: `x_likes_downloader_linux_arm64`
-- **Windows x86_64**: `x_likes_downloader_windows_x86_64.exe`
-- **Windows ARM64**: `x_likes_downloader_windows_arm64.exe`
-
-下载后解压并运行：
+从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台的版本，或从源码编译：
 
 ```bash
-# macOS/Linux
+# 预编译版（macOS/Linux）
 chmod +x x_likes_downloader
-./x_likes_downloader --help
+./x_likes_downloader --version
 
-# Windows
-x_likes_downloader.exe --help
-```
-
-### 方法二：从源码编译
-
-```bash
-# 克隆项目
-git clone <repository-url>
-cd x_likes_downloader
-
-# 编译当前平台版本
-cargo build --release
-
-# 安装到系统
+# 或从源码
 cargo install --path .
 ```
 
-## 使用方法
+> 需要 Rust **1.85+**（仅源码编译时）。
 
-### 1. 初始化配置
+### 2. 导入登录凭据（一次性）
 
-首先需要从浏览器中获取X的API请求信息：
+工具需要你浏览器里的登录信息：
 
-1. 打开X网站并登录
-2. 打开开发者工具（F12）
-3. 进入Network标签页
-4. 刷新页面，找到任意一个API请求
-5. 右键点击请求 -> Copy -> Copy as cURL
-6. 将cURL命令保存到 `curl_command.txt` 文件中
-
-然后运行初始化命令：
+1. 浏览器打开并登录 [x.com](https://x.com)，按 `F12` 打开开发者工具 → **Network** 标签
+2. 刷新页面，随便找一个请求 → 右键 → **Copy → Copy as cURL**
+3. 把内容存到 `curl_command.txt`，然后：
 
 ```bash
-# 使用默认的curl_command.txt文件
-x_likes_downloader setup
-
-# 或指定自定义文件
-x_likes_downloader setup --curl-file my_curl.txt
+x_likes_downloader setup                       # 默认读 curl_command.txt
+x_likes_downloader setup --curl-file my.txt    # 或指定文件
 ```
 
-### 2. 下载媒体文件
+### 3. 下载 & 整理
 
 ```bash
-# 开始下载
-x_likes_downloader download
+x_likes_downloader download    # 下载点赞推文里的所有图片/视频
+x_likes_downloader organize    # （可选）按用户名分文件夹整理
 ```
 
-### 3. 整理文件（可选）
+就这些。常用配置见下方 [配置](#配置)。
+
+---
+
+## 作为 AI Agent 工具使用（MCP）
+
+本项目内置 [MCP server](https://modelcontextprotocol.io/)，让 AI Agent 直接操作你的 X 点赞列表。装好后你可以直接对话：
+
+> "看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
+
+Agent 能用的 4 个工具：`list_likes`（列点赞）、`download_media`（下载）、`auth_status`（检查凭据）、`setup_from_curl`（导入凭据）。下载进度实时反馈，大文件可中断、可断点续传。
+
+### 第一步：装好 binary（所有 host 通用）
+
+MCP plugin **不自带** binary，先确保 `x_likes_downloader` ≥ 2.1.0 在 PATH 里，并已 `setup` 过凭据（见上方快速开始）：
 
 ```bash
-# 使用默认目录
-x_likes_downloader organize
-
-# 或指定自定义目录
-x_likes_downloader organize --source-dir downloads --target-dir organized
+x_likes_downloader --version    # 应 ≥ 2.1.0
 ```
 
-## 作为 Agent MCP server 使用（v2.1+）
+### 第二步：在你的 AI host 里装 plugin
 
-本项目内置 **MCP server**（[Model Context Protocol](https://modelcontextprotocol.io/)），让 AI Agent 通过自然语言操作你自己的 X 点赞列表：
+**Claude Code** —— 在 Claude Code 里输入这两条 slash 命令：
 
-- **典型对话**："看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
-- **完整安装/配置流程（host-agnostic）**：[`packaging/skill/x_likes/README.md`](./packaging/skill/x_likes/README.md)
-- **Agent 工具表与调用约定**：[`packaging/skill/x_likes/SKILL.md`](./packaging/skill/x_likes/SKILL.md)
-- **Multi-host packaging 架构**：[`packaging/README.md`](./packaging/README.md)
+```
+/plugin marketplace add HerbertGao/x_likes_downloader
+/plugin install x_likes@x_likes_downloader
+```
 
-### Host 适配状态
+> 用 `owner/repo` 简写（而不是完整 URL），Claude Code 会 clone 仓库，插件里的相对路径才能正确解析。`x_likes` 是插件名、`x_likes_downloader` 是 marketplace 名。
 
-| Host | Status | Path | Notes |
-|---|---|---|---|
-| Claude Code | ✅ v2.1+ | [`packaging/claude-code/`](./packaging/claude-code/) | Plugin + 4 个 `/x_likes:*` slash command + MCP server |
-| Codex CLI | ✅ v2.1+ | [`packaging/codex/`](./packaging/codex/) | Plugin（含 `interface` 富 manifest）+ MCP server，LLM 路由 |
-| OpenClaw | ✅ v2.1+ 📦 v1.x+ | [`packaging/openclaw/x_likes/`](./packaging/openclaw/x_likes/) | v2.0 用户需把 ClawHub URL 改为新路径 |
-| Hermes | ✅ v2.1+ | [`packaging/hermes/`](./packaging/hermes/) | SKILL.md sync-derived；`hermes skills install <raw-URL>` + 手动 YAML 加 MCP（hermes argparse 已知 bug 绕开） |
-| Cursor | 🔜 v2.2 | [`packaging/cursor/`](./packaging/cursor/) | SKILL.md 已验证兼容，host adapter 排期 v2.2 |
+装完即有 4 个 slash command：`/x_likes:list`、`/x_likes:download`、`/x_likes:setup`、`/x_likes:auth`。
 
-### 通过自建 marketplace 安装
-
-仓库根 `.claude-plugin/marketplace.json` 与 `.agents/plugins/marketplace.json` 是自托管 marketplace，无需上架第三方。
+**Codex CLI** —— 添加 marketplace（同样用 `owner/repo` 简写）：
 
 ```bash
-# Claude Code
-claude plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
-claude plugin install x_likes@x_likes_downloader   # 注意 @<marketplace> 限定
-
-# Codex CLI（需 codex CLI ≥ 0.128）
-codex plugin marketplace add https://github.com/HerbertGao/x_likes_downloader
-# codex 0.128 无独立 plugin install；编辑 ~/.codex/config.toml 加：
-#   [plugins."x_likes@x_likes_downloader"]
-#   enabled = true
+codex plugin marketplace add HerbertGao/x_likes_downloader
 ```
 
-Plugin **不打包** binary——先确保 `x_likes_downloader` 在 PATH 中（`cargo install` / brew tap / GHA release binary 任选）。详细见 [`packaging/skill/x_likes/README.md`](./packaging/skill/x_likes/README.md)。
+然后在 Codex 里运行 `/plugins`，选中 `x_likes` 安装启用。Codex 没有 `codex plugin install` 命令；若想手动启用，在 `~/.codex/config.toml` 加：
 
-### 三类用户路径
+```toml
+[plugins."x_likes@x_likes_downloader"]
+enabled = true
+```
 
-| 用户类型 | 入口 | 特点 |
+**其他 host**：OpenClaw / Hermes 见各自适配说明，路径见下表。
+
+### Host 支持状态
+
+| Host | 状态 | 安装说明 |
 |---|---|---|
-| **人类 CLI**（始终可用）| `x_likes_downloader download / setup / organize / update / likes list / media download / auth status` | 行为对老用户向后兼容；`--json` 模式输出 JSON 信封供 shell pipeline / jq 调试 |
-| **Agent via MCP**（v2 主推）| `x_likes_downloader serve --mcp`（由 MCP client 自动 spawn）| MCP `tools/list` 暴露 4 个工具，原生 `notifications/progress` 进度反馈（v2.1: 数值化为 `items_done + Σ_in_flight (bytes_done / bytes_total)`，UI 实时显示百分比），凭据完全本地化。`notifications/cancelled` 在 v2.1 真实生效——in-flight 下载在 1 秒内停止，partial 文件保留供 Range 续传 |
-| **lib 集成方** | `use x_likes_downloader::agent::*;` | 直接调 `list_likes` / `download_media` / `auth_status` / `import_curl` 异步函数 |
+| Claude Code | ✅ | [`packaging/claude-code/`](./packaging/claude-code/) |
+| Codex CLI | ✅ | [`packaging/codex/`](./packaging/codex/) |
+| OpenClaw | ✅ | [`packaging/openclaw/x_likes/`](./packaging/openclaw/x_likes/) |
+| Hermes | ✅ | [`packaging/hermes/`](./packaging/hermes/) |
+| Cursor | 🔜 v2.2 | [`packaging/cursor/`](./packaging/cursor/) |
 
-所有路径共享同一份 lib 实现，任何 bug 修复同时受益。
+> 工具表与调用约定见 [`packaging/skill/x_likes/SKILL.md`](./packaging/skill/x_likes/SKILL.md)，多 host 打包架构见 [`packaging/README.md`](./packaging/README.md)。
 
-## 配置选项
+---
 
-### 方法一：使用 .env 文件（推荐）
+## 配置
 
-1. 复制示例配置文件：
+最常用的几个配置项，写在项目根目录 `.env` 文件里（`cp env.example .env`）或用环境变量：
 
-    ```bash
-    cp env.example .env
-    ```
-
-2. 编辑 `.env` 文件，根据需要修改配置：
-
-    ```ini
-    # 下载配置
-    COUNT=50                    # 每次获取的推文数量
-    ALL=true                    # 是否下载所有点赞推文
-    DOWNLOAD_DIR=data/downloads # 下载目录
-    FILE_FORMAT={USERNAME}_{ID} # 文件命名格式
-
-    # 自动整理
-    AUTO_ORGANIZE=true          # 下载完成后自动整理
-    TARGET_DIR=data/organized   # 整理目标目录
-    ```
-
-### 方法二：环境变量
-
-也可以通过环境变量设置配置：
-
-```bash
-# 下载配置
-export COUNT=50                    # 每次获取的推文数量
-export ALL=true                    # 是否下载所有点赞推文
-export DOWNLOAD_DIR="downloads"    # 下载目录
-export FILE_FORMAT="{USERNAME} {ID}"  # 文件命名格式
-
-# 自动整理
-export AUTO_ORGANIZE=true          # 下载完成后自动整理
-export TARGET_DIR="organized"      # 整理目标目录
+```ini
+COUNT=50                     # 每次获取的推文数量
+ALL=true                     # 是否下载全部点赞推文
+DOWNLOAD_DIR=data/downloads  # 下载目录
+FILE_FORMAT={USERNAME}_{ID}  # 文件命名格式
+AUTO_ORGANIZE=true           # 下载后自动整理
+TARGET_DIR=data/organized    # 整理目标目录
 ```
 
-## 项目结构
+优先级：`.env` 文件 > 环境变量 > 默认值。如果无法直连 X，配置 HTTP 代理即可。
+
+### 多账号归档（别名）
+
+同一个人有多个 X 账号时，在 `DOWNLOAD_DIR` 下建 `username_aliases.txt`，把不同账号归到同一文件夹：
 
 ```text
-x_likes_downloader/
-├── src/
-│   ├── main.rs           # 主程序入口和命令行界面
-│   ├── config.rs         # 配置管理
-│   ├── setup.rs          # 初始化工具
-│   ├── x_api.rs          # X API 调用
-│   ├── downloader.rs     # 媒体下载器
-│   ├── updater.rs        # 版本检查与自动更新
-│   └── organize_files.rs # 文件整理工具
-├── data/                  # 运行时自动生成
-│   └── private_tokens.env    # 私有令牌配置
-├── .env                      # 环境配置文件（用户创建）
-├── env.example               # 示例配置文件
-└── Cargo.toml
-```
-
-## 主要模块说明
-
-### config.rs
-
-- 加载和管理配置信息
-- 从.env文件、环境变量和私有令牌文件读取配置
-- 支持代理、下载目录、文件格式等配置
-- 优先级：.env文件 > 环境变量 > 默认值
-
-### setup.rs
-
-- 解析cURL命令提取认证信息
-- 生成私有令牌配置文件
-- 支持cookie解析和URL解码
-
-### x_api.rs
-
-- 调用X内部GraphQL API
-- 支持分页获取点赞推文
-- 处理API响应和错误
-
-### downloader.rs
-
-- 异步下载媒体文件
-- 支持图片和视频下载
-- 断点续传和进度显示
-- 文件完整性验证
-
-### organize_files.rs
-
-- 根据文件名解析用户信息
-- 自动分类整理文件
-- 处理重复文件
-- 支持用户名别名映射（多账号归档到同一文件夹）
-
-### updater.rs
-
-- 检查 GitHub 上的最新版本
-- 判断当前版本是否需要更新
-- 下载并替换可执行文件（自动更新）
-
-### 用户名别名（多账号归档）
-
-如果同一个人拥有多个X账号，可以通过别名文件将不同账号的文件归档到同一文件夹。
-
-在下载目录（`DOWNLOAD_DIR`）下创建 `username_aliases.txt` 文件：
-
-```text
-# 每行一组，逗号分隔，首个为主名称（匹配目标文件夹）
+# 每行一组，逗号分隔，首个为主名称（= 目标文件夹）
 alice, alice_art, alice_photo
 bob, bob_backup
 ```
 
-这样 `alice_art` 和 `alice_photo` 账号的文件会自动归档到 `alice` 对应的文件夹中。
+`alice_art` / `alice_photo` 的文件会自动归到 `alice` 文件夹（文件名保留原始用户名）。文件不存在时忽略，`#` 开头为注释。
 
-- 文件不存在时自动忽略，不影响正常使用
-- 支持 `#` 开头的注释行
-- 归档后文件名保留原始用户名
-
-## 注意事项
-
-1. **认证信息安全**: `data/private_tokens.env` 包含敏感信息，请妥善保管
-2. **API限制**: 请合理控制请求频率，避免触发X的限流
-3. **代理设置**: 如果无法直接访问X，请配置有效的代理
-4. **存储空间**: 下载大量媒体文件会占用较多存储空间
+---
 
 ## 故障排除
 
-### 常见问题
+| 问题 | 排查 |
+|---|---|
+| 认证失败 | 检查 `data/private_tokens.env` 是否存在且正确；重新 `setup` |
+| 网络错误 / 连不上 X | 检查或更换代理 |
+| 下载失败 | 检查网络和磁盘空间 |
+| 整理出错 | 确认目标目录存在且可写 |
 
-1. **认证失败**: 检查 `data/private_tokens.env` 文件是否存在且内容正确
-2. **网络错误**: 确认代理设置正确，或尝试更换代理
-3. **下载失败**: 检查网络连接和存储空间
-4. **文件整理错误**: 确认目标目录存在且有写入权限
+开调试日志：`RUST_LOG=debug x_likes_downloader download`
 
-### 调试模式
-
-设置环境变量启用详细日志：
+清理断点续传残留文件：
 
 ```bash
-export RUST_LOG=debug
-x_likes_downloader download
+find ~/Pictures/x_likes -name "*.partial" -delete           # 部分下载残留
+rm -rf ~/Library/Caches/x_likes_downloader                  # ETag 缓存（macOS）
+rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Linux）
 ```
+
+---
+
+## 注意事项
+
+- `data/private_tokens.env` 含敏感凭据，请妥善保管。
+- 合理控制请求频率，避免触发 X 限流。
+- 下载大量媒体会占用较多磁盘空间。
+
+---
+
+## 版本说明
+
+<details>
+<summary><b>v2.1 更新（runtime cancellation + Range 续传 + 数值化进度）</b></summary>
+
+- **MCP cancellation 真实生效**：`serve --mcp` 收到 `notifications/cancelled` 后，in-flight `download_media` 在 1 秒内停止；返回含 `cancelled` 状态的完整 `DownloadOutput`，Agent 可据此重试。
+- **`.partial` + 原子 rename**：下载先写 `<path>.partial`，成功后原子 rename；失败/取消保留 partial 供续传。顺带修复 v2.0 crash 后半文件被静默 skip 的 bug。
+- **HTTP Range 续传 + ETag 校验**：ETag 失配 / 缓存缺失自动重下并 emit 诊断消息。
+- **进度数值化**：`progress = items_done + Σ_in_flight(bytes_done/bytes_total)`，大文件不再卡 0%。
+- **新增字段**：`DownloadStatus::Cancelled`、`summary.cancelled`（`#[serde(default)]` 兼容老 client）。
+
+不变：4 个 MCP 工具 schema、`serve --mcp` 子命令、stdio transport、各 host packaging 结构、CLI 行为。
+</details>
+
+---
+
+## 命令行接口速查
+
+所有功能也提供 `--json` 模式（输出 JSON 信封，便于 shell pipeline / jq）：
+
+| 命令 | 用途 |
+|---|---|
+| `setup` | 从 cURL 导入凭据 |
+| `download` | 下载点赞媒体 |
+| `organize` | 按用户名整理文件 |
+| `update` | 检查并自动更新 binary |
+| `likes list` / `media download` / `auth status` | 细粒度子命令 |
+| `serve --mcp` | 启动 MCP server（一般由 MCP client 自动拉起，无需手动运行） |
+
+---
 
 ## 许可证
 
-MIT License
+MIT License。欢迎 Issue / PR。
 
-## 贡献
-
-欢迎提交Issue和Pull Request！
-
-## 免责声明
-
-本工具仅供学习和个人使用，请遵守X的服务条款和相关法律法规。使用者需自行承担使用风险。
+> 本工具仅供学习和个人使用，请遵守 X 的服务条款和相关法律法规，使用风险自负。
