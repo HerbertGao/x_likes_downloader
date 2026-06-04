@@ -234,10 +234,8 @@ pub async fn fetch_tweet(req: FetchTweetRequest) -> Result<FetchTweetOutput, Err
     let api = XApi::new(config)
         .map_err(|e| ErrorPayload::new(ErrorKind::InternalError, e.to_string()))?;
 
-    let (status, resp) = api
-        .get_tweet_detail(&id)
-        .await
-        .map_err(|e| ErrorPayload::new(ErrorKind::NetworkError, e.to_string()))?;
+    // get_tweet_detail 自行区分构造失败（internal_error）与传输失败（network_error）。
+    let (status, resp) = api.get_tweet_detail(&id).await?;
 
     // 阶段一：请求级分类。
     if let Some(payload) = classify_tweet_detail(status, &resp) {
