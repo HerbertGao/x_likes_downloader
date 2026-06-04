@@ -3,7 +3,7 @@
 //! 目的：在 CI 环境（无 mcp-inspector / 无 X cookies）能跑的纯 stdio 集成测试。
 //! 通过 spawn 子进程 + 喂入手写 JSON-RPC 请求 + 解析 stdout，验证：
 //! 1. server 启动（initialize 握手）
-//! 2. tools/list 返回 4 个预期工具，每个工具有 inputSchema
+//! 2. tools/list 返回 5 个预期工具，每个工具有 inputSchema
 //! 3. stdin EOF 触发优雅关闭
 //!
 //! 不验证：tools/call 实际执行（需要凭据），cancellation（v2.0 deferred）。
@@ -23,6 +23,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "download_media",
     "auth_status",
     "setup_from_curl",
+    "fetch_tweet",
 ];
 
 fn jsonrpc_initialize() -> String {

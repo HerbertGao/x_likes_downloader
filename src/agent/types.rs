@@ -48,6 +48,25 @@ pub struct TweetSummary {
     pub liked_at: Option<String>,
 }
 
+/// `fetch_tweet` 的请求参数。`url` 与 `id` 恰好其一（互斥），由 lib 层运行时校验。
+/// schemars 派生的 JSON Schema 无法表达 oneOf 互斥，故两字段均为 Optional。
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct FetchTweetRequest {
+    /// 推文 URL，形如 `https://x.com/<handle>/status/<id>`（亦接受 twitter.com / i/web/status / 带 query 或 photo 后缀）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// 纯数字 tweet_id。与 `url` 二选一。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+}
+
+/// `fetch_tweet` 的输出，镜像 `ListOutput`（不含 unsupported_media）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FetchTweetOutput {
+    pub tweet: TweetSummary,
+    pub schema_version: u32,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ListOpts {
     pub all: bool,

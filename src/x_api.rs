@@ -3,6 +3,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 
 use crate::config::Config;
+use crate::error::{ErrorKind, ErrorPayload};
 
 #[derive(Debug)]
 pub struct XApi {
@@ -101,6 +102,116 @@ impl XApi {
         }
 
         Ok(all_tweets)
+    }
+
+    /// Fetch the `TweetDetail` GraphQL response for a single tweet.
+    ///
+    /// 返回 `(http_status, body)`。鉴权 header 复用与 Likes 一致的构造；
+    /// 先取 HTTP 状态码再读 body，仅传输错误返 `Err`（供上层映射 network_error）；
+    /// 非 JSON body（如 401 HTML 页）解析为 `Value::Null` 而非 `Err`，非 2xx 不提前 `Err`，
+    /// 让上层分类器靠状态码正确判定。禁止把含 cookie/bearer 的 header 或完整 URL 打到 stderr。
+    /// 错误分两类：HTTP 发起前的构造失败（序列化 / header 解析）→ `internal_error`
+    /// （非网络、不可重试）；HTTP 发起后的传输失败（连接 / 超时 / 读取）→ `network_error`。
+    /// 不把构造失败误标成可重试的 network_error。
+    pub async fn get_tweet_detail(
+        &self,
+        tweet_id: &str,
+    ) -> std::result::Result<(u16, Value), ErrorPayload> {
+        let variables = json!({
+            "focalTweetId": tweet_id,
+            "with_rux_injections": false,
+            "rankingMode": "Relevance",
+            "includePromotedContent": true,
+            "withCommunity": true,
+            "withQuickPromoteEligibilityTweetFields": true,
+            "withBirdwatchNotes": true,
+            "withVoice": true
+        });
+
+        let variables_str = serde_json::to_string(&variables).map_err(|e| {
+            ErrorPayload::new(
+                ErrorKind::InternalError,
+                format!("TweetDetail variables 序列化失败: {e}"),
+            )
+        })?;
+        let variables_encoded = urlencoding::encode(&variables_str);
+        let features_encoded = urlencoding::encode(&self.config.tweet_features);
+        let fieldtoggles_encoded = urlencoding::encode(&self.config.tweet_fieldtoggles);
+
+        let url = format!(
+            "{}?variables={}&features={}&fieldToggles={}",
+            self.config.tweet_detail_api_url,
+            variables_encoded,
+            features_encoded,
+            fieldtoggles_encoded
+        );
+
+        let header_err = |name: &str| {
+            let name = name.to_string();
+            move |e| {
+                ErrorPayload::new(
+                    ErrorKind::InternalError,
+                    format!("{name} header 构造失败: {e}"),
+                )
+            }
+        };
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            format!("Bearer {}", self.config.bearer_token)
+                .parse()
+                .map_err(header_err("Authorization"))?,
+        );
+        headers.insert(
+            "Cookie",
+            format!(
+                "auth_token={}; ct0={}",
+                self.config.auth_token, self.config.ct0
+            )
+            .parse()
+            .map_err(header_err("Cookie"))?,
+        );
+        headers.insert(
+            "X-Csrf-Token",
+            self.config
+                .ct0
+                .parse()
+                .map_err(header_err("X-Csrf-Token"))?,
+        );
+        if !self.config.user_agent.is_empty() {
+            headers.insert(
+                "User-Agent",
+                self.config
+                    .user_agent
+                    .parse()
+                    .map_err(header_err("User-Agent"))?,
+            );
+        }
+
+        let response = self
+            .client
+            .get(&url)
+            .headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await
+            .map_err(|e| {
+                ErrorPayload::new(
+                    ErrorKind::NetworkError,
+                    format!("TweetDetail 请求失败: {e}"),
+                )
+            })?;
+
+        let status = response.status().as_u16();
+        let text = response.text().await.map_err(|e| {
+            ErrorPayload::new(
+                ErrorKind::NetworkError,
+                format!("读取 TweetDetail 响应失败: {e}"),
+            )
+        })?;
+        let resp = serde_json::from_str(&text).unwrap_or(Value::Null);
+
+        Ok((status, resp))
     }
 
     fn parse_likes_response(&self, data: &Value) -> Result<(Vec<Value>, Option<String>)> {

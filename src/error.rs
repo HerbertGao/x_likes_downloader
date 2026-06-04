@@ -13,6 +13,7 @@ pub enum ErrorKind {
     BinaryMissing,
     InvalidItem,
     InvalidArgument,
+    TweetUnavailable,
 }
 
 impl ErrorKind {
@@ -27,7 +28,8 @@ impl ErrorKind {
             | ErrorKind::SandboxViolation
             | ErrorKind::BinaryMissing
             | ErrorKind::InvalidItem
-            | ErrorKind::InvalidArgument => 1,
+            | ErrorKind::InvalidArgument
+            | ErrorKind::TweetUnavailable => 1,
         }
     }
 
@@ -45,6 +47,7 @@ impl ErrorKind {
             ErrorKind::BinaryMissing => "未找到 xld 可执行文件，请从 GitHub Releases 安装",
             ErrorKind::InvalidItem => "media item 字段不完整或格式错误",
             ErrorKind::InvalidArgument => "命令行参数不合法",
+            ErrorKind::TweetUnavailable => "推文不存在、已删除、受保护或当前凭据不可见",
         }
     }
 }
@@ -137,6 +140,7 @@ mod tests {
         assert_eq!(ErrorKind::NotConfigured.exit_code(), 1);
         assert_eq!(ErrorKind::InternalError.exit_code(), 1);
         assert_eq!(ErrorKind::SandboxViolation.exit_code(), 1);
+        assert_eq!(ErrorKind::TweetUnavailable.exit_code(), 1);
     }
 
     #[test]

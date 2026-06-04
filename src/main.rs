@@ -5,9 +5,12 @@ use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 
 use x_likes_downloader::agent::types::{
-    AuthStatus, DownloadOpts, ListOpts, MediaItem, NullSink, ProgressEvent, ProgressSink,
+    AuthStatus, DownloadOpts, FetchTweetRequest, ListOpts, MediaItem, NullSink, ProgressEvent,
+    ProgressSink,
 };
-use x_likes_downloader::agent::{auth_status, download_media, list_likes, run_serve_mcp};
+use x_likes_downloader::agent::{
+    auth_status, download_media, fetch_tweet, list_likes, run_serve_mcp,
+};
 use x_likes_downloader::config::{self, Config};
 use x_likes_downloader::envelope::{Meta, OutputEnvelope};
 use x_likes_downloader::error::{ErrorKind, ErrorPayload};
@@ -51,6 +54,11 @@ enum Commands {
     Auth {
         #[command(subcommand)]
         action: AuthAction,
+    },
+    /// 按 URL 或 id 抓取任意一条推文的媒体元数据（Agent 友好的 JSON 输出）
+    Tweet {
+        #[command(subcommand)]
+        action: TweetAction,
     },
     /// 启动 MCP server（v2 Agent 接口，stdio transport）
     Serve {
@@ -99,6 +107,22 @@ enum MediaAction {
         #[arg(long, default_value_t = 4)]
         concurrency: u32,
         /// JSON 输出（stdout 信封；进度反馈走 MCP server，不走 stderr）
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum TweetAction {
+    /// 按 URL 或 id 抓取单条推文，输出 JSON 信封到 stdout
+    Get {
+        /// 推文 URL（形如 `https://x.com/<handle>/status/<id>`，与 `--id` 二选一）
+        #[arg(long)]
+        url: Option<String>,
+        /// 纯数字 tweet_id（与 `--url` 二选一）
+        #[arg(long)]
+        id: Option<String>,
+        /// 显式声明 JSON 输出（保留供未来扩展，新子命令默认即 JSON）
         #[arg(long)]
         json: bool,
     },
@@ -169,6 +193,9 @@ async fn main() -> Result<()> {
         Commands::Auth { action } => match action {
             AuthAction::Status { json: _ } => run_auth_status().await,
         },
+        Commands::Tweet { action } => match action {
+            TweetAction::Get { url, id, json: _ } => run_tweet_get(url, id).await,
+        },
         Commands::Serve { mcp } => {
             if !mcp {
                 eprintln!("error: serve 子命令当前仅支持 --mcp（MCP server 模式）");
@@ -235,6 +262,25 @@ async fn run_likes_list(
             env.emit()
         }
         Err(payload) => OutputEnvelope::failure(payload).emit(),
+    }
+}
+
+async fn run_tweet_get(url: Option<String>, id: Option<String>) -> i32 {
+    let req = FetchTweetRequest { url, id };
+    match fetch_tweet(req).await {
+        Ok(out) => {
+            let schema_version = out.schema_version;
+            let data = serde_json::to_value(&out.tweet).unwrap_or(serde_json::Value::Null);
+            let mut env = OutputEnvelope::success(data);
+            env.meta.schema_version = schema_version;
+            env.emit()
+        }
+        Err(payload) => {
+            if payload.kind == ErrorKind::InvalidArgument {
+                eprintln!("用法: x_likes_downloader tweet get --url <url> | --id <id>");
+            }
+            OutputEnvelope::failure(payload).emit()
+        }
     }
 }
 

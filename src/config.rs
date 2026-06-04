@@ -95,10 +95,7 @@ impl Config {
 
         Ok(Config {
             // 私密字段：来源固定为 private_tokens（不走三层）
-            user_id: private_tokens
-                .get("USER_ID")
-                .cloned()
-                .unwrap_or_default(),
+            user_id: private_tokens.get("USER_ID").cloned().unwrap_or_default(),
             bearer_token: resolve_protocol_field(
                 "BEARER_TOKEN",
                 "bearer_token",
@@ -134,19 +131,16 @@ impl Config {
                 .unwrap_or_else(|_| "False".to_string())
                 .to_lowercase()
                 == "true",
-            download_dir: env::var("DOWNLOAD_DIR")
-                .unwrap_or_else(|_| "data/downloads".to_string()),
+            download_dir: env::var("DOWNLOAD_DIR").unwrap_or_else(|_| "data/downloads".to_string()),
             download_record: env::var("DOWNLOAD_RECORD")
                 .unwrap_or_else(|_| "data/downloaded_tweet_ids.txt".to_string()),
-            file_format: env::var("FILE_FORMAT")
-                .unwrap_or_else(|_| "{USERNAME} {ID}".to_string()),
+            file_format: env::var("FILE_FORMAT").unwrap_or_else(|_| "{USERNAME} {ID}".to_string()),
             download_sandbox_base_dir: resolve_sandbox_base_dir(&private_tokens),
             auto_organize: env::var("AUTO_ORGANIZE")
                 .unwrap_or_else(|_| "False".to_string())
                 .to_lowercase()
                 == "true",
-            target_dir: env::var("TARGET_DIR")
-                .unwrap_or_else(|_| "data/organized".to_string()),
+            target_dir: env::var("TARGET_DIR").unwrap_or_else(|_| "data/organized".to_string()),
 
             // 协议字段：env > private_tokens > defaults.json > hardcoded
             likes_api_url: resolve_protocol_field(
@@ -170,11 +164,33 @@ impl Config {
                 &defaults,
                 r#"{"withArticlePlainText":false}"#,
             ),
-            tweet_detail_api_url: env::var("TWEET_DETAIL_API_URL").unwrap_or_else(|_| "https://x.com/i/api/graphql/_8aYOgEDz35BrBcBal1-_w/TweetDetail".to_string()),
-            tweet_features: env::var("TWEET_FEATURES").unwrap_or_else(|_| r#"{"rweb_video_screen_enabled":false,"profile_label_improvements_pcf_label_in_post_enabled":true,"rweb_tipjar_consumption_enabled":true,"verified_phone_label_enabled":false,"creator_subscriptions_tweet_preview_api_enabled":true,"responsive_web_graphql_timeline_navigation_enabled":true,"responsive_web_graphql_skip_user_profile_image_extensions_enabled":false,"premium_content_api_read_enabled":false,"communities_web_enable_tweet_community_results_fetch":true,"c9s_tweet_anatomy_moderator_badge_enabled":true,"responsive_web_grok_analyze_button_fetch_trends_enabled":false,"responsive_web_grok_analyze_post_followups_enabled":true,"responsive_web_jetfuel_frame":false,"responsive_web_grok_share_attachment_enabled":true,"articles_preview_enabled":true,"responsive_web_edit_tweet_api_enabled":true,"graphql_is_translatable_rweb_tweet_is_translatable_enabled":true,"view_counts_everywhere_api_enabled":true,"longform_notetweets_consumption_enabled":true,"responsive_web_twitter_article_tweet_consumption_enabled":true,"tweet_awards_web_tipping_enabled":false,"responsive_web_grok_show_grok_translated_post":false,"responsive_web_grok_analysis_button_from_backend":false,"creator_subscriptions_quote_tweet_preview_enabled":false,"freedom_of_speech_not_reach_fetch_enabled":true,"standardized_nudges_misinfo":true,"tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled":true,"longform_notetweets_rich_text_read_enabled":true,"longform_notetweets_inline_media_enabled":true,"responsive_web_grok_image_annotation_enabled":true,"responsive_web_enhance_cards_enabled":false}"#.to_string()),
-            tweet_fieldtoggles: env::var("TWEET_FIELDTOGGLES").unwrap_or_else(|_| r#"{"withArticleRichContentState":true,"withArticlePlainText":false,"withGrokAnalyze":false,"withDisallowedReplyControls":false}"#.to_string()),
-            mock_mode: env::var("MOCK_MODE").unwrap_or_else(|_| "False".to_string()).to_lowercase() == "true",
-            mock_liked_tweets_file: env::var("MOCK_LIKED_TWEETS_FILE").unwrap_or_else(|_| "data/mock/mock_liked_tweets.json".to_string()),
+            tweet_detail_api_url: resolve_protocol_field(
+                "TWEET_DETAIL_API_URL",
+                "tweet_detail_api_url",
+                &private_tokens,
+                &defaults,
+                "https://x.com/i/api/graphql/6uCvnic3m5reVuehkvHa3w/TweetDetail",
+            ),
+            tweet_features: resolve_protocol_field(
+                "TWEET_FEATURES",
+                "tweet_features",
+                &private_tokens,
+                &defaults,
+                r#"{}"#,
+            ),
+            tweet_fieldtoggles: resolve_protocol_field(
+                "TWEET_FIELDTOGGLES",
+                "tweet_fieldtoggles",
+                &private_tokens,
+                &defaults,
+                r#"{}"#,
+            ),
+            mock_mode: env::var("MOCK_MODE")
+                .unwrap_or_else(|_| "False".to_string())
+                .to_lowercase()
+                == "true",
+            mock_liked_tweets_file: env::var("MOCK_LIKED_TWEETS_FILE")
+                .unwrap_or_else(|_| "data/mock/mock_liked_tweets.json".to_string()),
         })
     }
 
@@ -264,6 +280,38 @@ mod tests {
         let v: Value = serde_json::from_str(VENDORED_DEFAULTS).unwrap();
         assert!(v.get("likes_api_url").is_some());
         assert_eq!(v.get("schema_version").and_then(|x| x.as_u64()), Some(1));
+    }
+
+    #[test]
+    fn vendored_defaults_has_tweet_detail_fields() {
+        // (a) defaults.json 必须承载 tweet_detail_* 三字段的真值（非空字符串），
+        // 否则四层解析会落到 config.rs 的 `{}` 兜底、请求被 X 拒（原子性约束）。
+        let v: Value = serde_json::from_str(VENDORED_DEFAULTS).unwrap();
+        for key in &[
+            "tweet_detail_api_url",
+            "tweet_features",
+            "tweet_fieldtoggles",
+        ] {
+            let s = v
+                .get(*key)
+                .and_then(|x| x.as_str())
+                .unwrap_or_else(|| panic!("defaults.json 缺少字段 {}", key));
+            assert!(!s.is_empty(), "defaults.json 字段 {} 不应为空", key);
+        }
+    }
+
+    #[test]
+    fn tweet_features_resolves_to_object_from_defaults() {
+        // (b) 空 private_tokens + 真实 VENDORED_DEFAULTS 下，json_key 映射正确：
+        // resolve 出来的不是 `{}` 兜底，且能解析成 JSON object（验证 (env_key, json_key) 配对）。
+        let pt = HashMap::new();
+        let defaults: Value = serde_json::from_str(VENDORED_DEFAULTS).unwrap();
+
+        let resolved =
+            resolve_protocol_field("TWEET_FEATURES", "tweet_features", &pt, &defaults, "{}");
+        assert_ne!(resolved, "{}", "应命中 defaults.json 真值而非硬编码兜底");
+        let parsed: Value = serde_json::from_str(&resolved).expect("tweet_features 应为合法 JSON");
+        assert!(parsed.is_object(), "tweet_features 应解析为 JSON object");
     }
 
     #[test]

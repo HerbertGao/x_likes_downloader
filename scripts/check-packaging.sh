@@ -117,7 +117,7 @@ validate_sot_defaults() {
     err "$file is not valid JSON"
     return
   fi
-  local allowed='["schema_version","likes_api_url","likes_features","likes_fieldtoggles","bearer_token"]'
+  local allowed='["schema_version","likes_api_url","likes_features","likes_fieldtoggles","tweet_detail_api_url","tweet_features","tweet_fieldtoggles","bearer_token"]'
   local unknown
   unknown=$(jq --argjson a "$allowed" '[keys[] as $k | select(($a | index($k)) | not)]' "$file")
   if [[ "$unknown" != "[]" ]]; then
