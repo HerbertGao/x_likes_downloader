@@ -1,7 +1,7 @@
 ---
 name: x_likes
 description: Operate the user's own X (Twitter) Likes via natural language — list likes, download media, check credential health. Backed by a local `x_likes_downloader serve --mcp` MCP server (Rust). All credentials stay on the user's machine.
-min_binary_version: 2.1.0
+min_binary_version: 2026.6.0
 ---
 
 # X Likes Downloader Skill (v2 / MCP)
@@ -20,7 +20,7 @@ min_binary_version: 2.1.0
 
 ## 前置依赖
 
-- `x_likes_downloader` 可执行文件 ≥ **2.1.0**（含 `serve --mcp` 子命令）
+- `x_likes_downloader` 可执行文件 ≥ **2026.6.0**（含 `serve --mcp` 子命令）
 - `x_likes_downloader` 必须在 PATH 中。MCP 客户端尝试启动失败时（如未安装），客户端会提示——请将用户引导到 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases)
 - 用户已运行 `x_likes_downloader setup --curl-file <path>` 导入 cURL（首次使用）
 

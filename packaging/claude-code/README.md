@@ -28,7 +28,7 @@ claude plugin marketplace add "$(pwd)/x_likes_downloader" \
 
 ## 前置：安装 binary
 
-本 plugin **不打包** binary——它假设 `x_likes_downloader` ≥ 2.1.0 已在 PATH 中。
+本 plugin **不打包** binary——它假设 `x_likes_downloader` ≥ 2026.6.0 已在 PATH 中。
 
 ```bash
 # macOS Apple Silicon（其他平台见 packaging/skill/x_likes/README.md）

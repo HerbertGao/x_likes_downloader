@@ -49,10 +49,10 @@ brew install HerbertGao/tap/x_likes_downloader  # 如有 tap
 
 ```bash
 x_likes_downloader --version
-# 期望输出：x_likes_downloader 2.1.0 或更新
+# 期望输出：x_likes_downloader 2026.6.0 或更新
 ```
 
-> 本 skill v2.1 要求 binary ≥ **2.1.0**（`SKILL.md` frontmatter 中 `min_binary_version` 字段约束）。
+> 本 skill v2.1 要求 binary ≥ **2026.6.0**（`SKILL.md` frontmatter 中 `min_binary_version` 字段约束）。
 
 ### 2. 从浏览器抓取 cURL
 

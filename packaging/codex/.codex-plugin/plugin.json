@@ -1,6 +1,6 @@
 {
   "name": "x_likes",
-  "version": "2.1.0",
+  "version": "2026.6.0",
   "description": "Operate the user's own X (Twitter) Likes via natural language — list, download media, check auth health. Backed by a local x_likes_downloader MCP server.",
   "author": {
     "name": "HerbertGao",

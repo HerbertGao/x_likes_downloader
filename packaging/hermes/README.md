@@ -8,7 +8,7 @@
 
 ## 前置：安装 binary
 
-本 adapter **不打包** binary——`x_likes_downloader` ≥ 2.1.0 必须在 PATH 中。
+本 adapter **不打包** binary——`x_likes_downloader` ≥ 2026.6.0 必须在 PATH 中。
 
 ```bash
 # macOS Apple Silicon

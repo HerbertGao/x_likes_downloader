@@ -21,7 +21,7 @@ clawhub register x_likes \
 
 ## 前置：安装 binary
 
-本 skill **不打包** binary——它假设 `x_likes_downloader` ≥ 2.1.0 已在 PATH 中。
+本 skill **不打包** binary——它假设 `x_likes_downloader` ≥ 2026.6.0 已在 PATH 中。
 
 ```bash
 # macOS Apple Silicon
@@ -45,7 +45,7 @@ x_likes_downloader setup --curl-file ~/curl_command.txt
 | 文件 | 用途 |
 |---|---|
 | `SKILL.md` | Agent 工具表 + 调用约定（含 `metadata.openclaw.bins`、`min_version` 块） |
-| `mcp-config.json` | MCP server 启动配置（`command: x_likes_downloader`、`args: [serve, --mcp]`、`transport: stdio`、`minimum_xld_version: 2.1.0`） |
+| `mcp-config.json` | MCP server 启动配置（`command: x_likes_downloader`、`args: [serve, --mcp]`、`transport: stdio`、`minimum_xld_version: 2026.6.0`） |
 | `defaults.json` | 公开协议参数兜底（cURL 导入会覆盖；从 SOT 同步派生） |
 
 `SKILL.md` 与 `defaults.json` 由 `scripts/sync-skill.sh` 从 SOT (`packaging/skill/x_likes/`) 派生；**不要手工编辑**——CI 会通过 `git diff --exit-code` 检测漂移并 fail。
@@ -70,7 +70,7 @@ OpenClaw 安装后落地于：
   "command": "x_likes_downloader",
   "args": ["serve", "--mcp"],
   "transport": "stdio",
-  "minimum_xld_version": "2.1.0"
+  "minimum_xld_version": "2026.6.0"
 }
 ```
 

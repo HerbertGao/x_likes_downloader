@@ -60,10 +60,10 @@ Agent 能用的 4 个工具：`list_likes`（列点赞）、`download_media`（�
 
 ### 第一步：装好 binary（所有 host 通用）
 
-MCP plugin **不自带** binary，先确保 `x_likes_downloader` ≥ 2.1.0 在 PATH 里，并已 `setup` 过凭据（见上方快速开始）：
+MCP plugin **不自带** binary，先确保 `x_likes_downloader` ≥ 2026.6.0 在 PATH 里，并已 `setup` 过凭据（见上方快速开始）：
 
 ```bash
-x_likes_downloader --version    # 应 ≥ 2.1.0
+x_likes_downloader --version    # 应 ≥ 2026.6.0
 ```
 
 ### 第二步：在你的 AI host 里装 plugin

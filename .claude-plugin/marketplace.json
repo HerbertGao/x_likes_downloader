@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Self-hosted Claude Code plugin marketplace for x_likes_downloader — operate the user's own X (Twitter) Likes via natural language.",
-    "version": "2.1.0"
+    "version": "2026.6.0"
   },
   "plugins": [
     {
