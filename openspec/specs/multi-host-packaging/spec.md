@@ -1,3 +1,8 @@
+## 目的
+
+定义仓库根 `packaging/` 目录结构与各 host adapter（Claude Code、Codex、OpenClaw、Hermes、Cursor）布局，以 `packaging/skill/x_likes/` 为单一可信源（SOT），各 host 的 SKILL.md 副本由 SOT 派生，且 packaging 不进入 Cargo workspace、不含源码与私密凭据。
+
+## 需求
 
 ### 需求:packaging/ 目录结构与 SOT 单一可信源
 

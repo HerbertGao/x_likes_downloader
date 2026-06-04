@@ -1,16 +1,8 @@
-## 移除需求
+## 修改需求
 
 ### 需求:tools/list 暴露 4 个工具
 
-**Reason**: 工具集从 4 个扩为 5 个（新增 `fetch_tweet`）。该需求标题内嵌了工具数量「4 个」，无法通过原地 MODIFIED 更新（OpenSpec 按需求标题逐字匹配做整块替换，改标题会产生重复段）。故移除本需求，由新需求「tools/list 暴露 5 个工具」取代。
-
-**Migration**: 见本变更新增需求「tools/list 暴露 5 个工具」——内容为原需求全文 + `fetch_tweet` 工具 + 工具名集合断言由 4 改 5。无运行时迁移，纯 spec 重命名。
-
-## 新增需求
-
-### 需求:tools/list 暴露 5 个工具
-
-`xld serve --mcp` 必须在响应 MCP `tools/list` 请求时返回且仅返回以下 5 个工具，每个工具必须包含名称、中文描述、JSON Schema 形式的输入参数：
+`xld serve --mcp` 必须在响应 MCP `tools/list` 请求时返回且仅返回以下 5 个工具（本次变更由 4 个扩为 5 个，新增 `fetch_tweet`），每个工具必须包含名称、中文描述、JSON Schema 形式的输入参数：
 
 - `list_likes`：拉取当前账号的点赞推文列表
 - `download_media`：按一组 MediaItem 下载媒体到沙箱目录
@@ -33,8 +25,6 @@
 #### 场景:工具描述用中文
 - **当** 解析任一工具的 `description` 字段
 - **那么** 该字段必须为非空 UTF-8 字符串，描述工具用途与典型场景
-
-## 修改需求
 
 ### 需求:tools/call 调用语义
 

@@ -1,3 +1,9 @@
+## 目的
+
+提供 `xld media download` 子命令，按 `MediaItem[]` 描述（`--items`）或 tweet ID 快捷方式（`--ids`）下载对应媒体到沙箱目录，输出逐文件结果的 JSON 信封，并以 items 路径避免重复 GraphQL 调用。
+
+## 需求
+
 ### 需求:CLI 子命令 `xld media download`
 
 系统必须提供 `xld media download` 子命令，用于按一组 media item 描述下载对应媒体到沙箱目录。该子命令必须支持以下两种互斥的输入形式：

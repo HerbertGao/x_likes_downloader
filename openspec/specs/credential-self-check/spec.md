@@ -1,3 +1,9 @@
+## 目的
+
+提供 `xld auth status` 子命令，通过一次轻量真实请求探测本地凭据是否仍能访问 X GraphQL `Likes` 端点，并以分类的 JSON 信封区分健康、认证过期、端点过期、速率限制等状态。
+
+## 需求
+
 ### 需求:CLI 子命令 `xld auth status`
 
 系统必须提供 `xld auth status` 子命令，用于探测当前本地凭据是否仍可用于访问 X GraphQL `Likes` 端点。该子命令必须支持 `--json` 输出 JSON 信封到 stdout。其行为必须包含一次轻量真实请求（`count=1`，不翻页），而非仅做字段静态校验。

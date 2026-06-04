@@ -1,3 +1,9 @@
+## 目的
+
+为 `xld media download` 定义一个可配置且跨平台默认的下载沙箱根目录，并通过 jail 规则约束子目录写入，确保所有媒体只能落在沙箱范围内。
+
+## 需求
+
 ### 需求:沙箱 base dir 配置项
 
 系统必须新增配置项 `download_sandbox_base_dir`，作为 `xld media download` 写入文件的根目录。该配置项必须支持通过环境变量 / `.env` / `xld setup --download-dir <path>` 三种方式设置，加载优先级遵循项目既有配置层级。

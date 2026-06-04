@@ -1,3 +1,9 @@
+## 目的
+
+扩展 `xld setup` 的 cURL 解析，在认证字段之外同时提取 `Likes` 端点的协议参数（API URL、features、fieldToggles）写入本地配置，使本地 override 公开默认值，并对非 Likes 端点的 cURL 拒绝导入。
+
+## 需求
+
 ### 需求:cURL 解析必须同时提取协议参数
 
 `xld setup` 在解析用户提供的 cURL 命令时，除现有的认证字段（`auth_token`、`ct0`、`bearer_token`、`user_agent`、`user_id`）外，必须额外提取以下协议参数并写入本地用户配置：
