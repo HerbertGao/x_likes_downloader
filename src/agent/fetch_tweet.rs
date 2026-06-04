@@ -91,10 +91,13 @@ pub fn classify_tweet_detail(status: u16, resp: &Value) -> Option<ErrorPayload> 
         ));
     }
 
+    // 字段缺失，或 `data`/`threaded_conversation_with_injections_v2` 为 JSON null，
+    // 均视为「缺路径」→ endpoint_stale（present-but-null 与缺失语义等价）。
     let has_conversation = resp
         .get("data")
         .and_then(|d| d.get("threaded_conversation_with_injections_v2"))
-        .is_some();
+        .map(|v| !v.is_null())
+        .unwrap_or(false);
     if !has_conversation {
         return Some(ErrorPayload::new(
             ErrorKind::EndpointStale,
@@ -600,6 +603,21 @@ mod tests {
     #[test]
     fn classify_200_missing_conversation_is_endpoint_stale() {
         let resp = json!({ "data": {} });
+        let p = classify_tweet_detail(200, &resp).unwrap();
+        assert_eq!(p.kind, ErrorKind::EndpointStale);
+    }
+
+    #[test]
+    fn classify_200_null_conversation_is_endpoint_stale() {
+        // present-but-null 应与缺失等价 → endpoint_stale，而非通过阶段一落成 tweet_unavailable
+        let resp = json!({ "data": { "threaded_conversation_with_injections_v2": null } });
+        let p = classify_tweet_detail(200, &resp).unwrap();
+        assert_eq!(p.kind, ErrorKind::EndpointStale);
+    }
+
+    #[test]
+    fn classify_200_null_data_is_endpoint_stale() {
+        let resp = json!({ "data": null });
         let p = classify_tweet_detail(200, &resp).unwrap();
         assert_eq!(p.kind, ErrorKind::EndpointStale);
     }
