@@ -777,10 +777,7 @@ mod tests {
         let summary = entry_to_summary(focal_entry, false)
             .expect("wrapper 焦点 entry 应能解析为 TweetSummary");
         assert!(!summary.id.is_empty(), "解包后应取到非空 id");
-        assert!(
-            !summary.media.is_empty(),
-            "wrapper 解包后应取到非空 media"
-        );
+        assert!(!summary.media.is_empty(), "wrapper 解包后应取到非空 media");
     }
 
     /// 旧 schema：screen_name / name 在 user.legacy 下，仍要识别。

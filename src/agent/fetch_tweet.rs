@@ -222,7 +222,10 @@ pub async fn fetch_tweet(req: FetchTweetRequest) -> Result<FetchTweetOutput, Err
         .map_err(|e| ErrorPayload::new(ErrorKind::InternalError, format!("加载配置失败: {}", e)))?;
 
     if !config.is_configured() {
-        return Err(ErrorPayload::new(ErrorKind::NotConfigured, "本地未导入凭据"));
+        return Err(ErrorPayload::new(
+            ErrorKind::NotConfigured,
+            "本地未导入凭据",
+        ));
     }
 
     let api = XApi::new(config)
@@ -263,7 +266,10 @@ pub async fn fetch_tweet(req: FetchTweetRequest) -> Result<FetchTweetOutput, Err
     }
 
     let tweet = entry_to_summary(&entry, false).ok_or_else(|| {
-        ErrorPayload::new(ErrorKind::TweetUnavailable, "焦点推文无法解析为 TweetSummary")
+        ErrorPayload::new(
+            ErrorKind::TweetUnavailable,
+            "焦点推文无法解析为 TweetSummary",
+        )
     })?;
 
     Ok(FetchTweetOutput {

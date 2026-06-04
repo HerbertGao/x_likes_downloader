@@ -95,10 +95,7 @@ impl Config {
 
         Ok(Config {
             // 私密字段：来源固定为 private_tokens（不走三层）
-            user_id: private_tokens
-                .get("USER_ID")
-                .cloned()
-                .unwrap_or_default(),
+            user_id: private_tokens.get("USER_ID").cloned().unwrap_or_default(),
             bearer_token: resolve_protocol_field(
                 "BEARER_TOKEN",
                 "bearer_token",
@@ -134,19 +131,16 @@ impl Config {
                 .unwrap_or_else(|_| "False".to_string())
                 .to_lowercase()
                 == "true",
-            download_dir: env::var("DOWNLOAD_DIR")
-                .unwrap_or_else(|_| "data/downloads".to_string()),
+            download_dir: env::var("DOWNLOAD_DIR").unwrap_or_else(|_| "data/downloads".to_string()),
             download_record: env::var("DOWNLOAD_RECORD")
                 .unwrap_or_else(|_| "data/downloaded_tweet_ids.txt".to_string()),
-            file_format: env::var("FILE_FORMAT")
-                .unwrap_or_else(|_| "{USERNAME} {ID}".to_string()),
+            file_format: env::var("FILE_FORMAT").unwrap_or_else(|_| "{USERNAME} {ID}".to_string()),
             download_sandbox_base_dir: resolve_sandbox_base_dir(&private_tokens),
             auto_organize: env::var("AUTO_ORGANIZE")
                 .unwrap_or_else(|_| "False".to_string())
                 .to_lowercase()
                 == "true",
-            target_dir: env::var("TARGET_DIR")
-                .unwrap_or_else(|_| "data/organized".to_string()),
+            target_dir: env::var("TARGET_DIR").unwrap_or_else(|_| "data/organized".to_string()),
 
             // 协议字段：env > private_tokens > defaults.json > hardcoded
             likes_api_url: resolve_protocol_field(
@@ -191,8 +185,12 @@ impl Config {
                 &defaults,
                 r#"{}"#,
             ),
-            mock_mode: env::var("MOCK_MODE").unwrap_or_else(|_| "False".to_string()).to_lowercase() == "true",
-            mock_liked_tweets_file: env::var("MOCK_LIKED_TWEETS_FILE").unwrap_or_else(|_| "data/mock/mock_liked_tweets.json".to_string()),
+            mock_mode: env::var("MOCK_MODE")
+                .unwrap_or_else(|_| "False".to_string())
+                .to_lowercase()
+                == "true",
+            mock_liked_tweets_file: env::var("MOCK_LIKED_TWEETS_FILE")
+                .unwrap_or_else(|_| "data/mock/mock_liked_tweets.json".to_string()),
         })
     }
 
@@ -289,7 +287,11 @@ mod tests {
         // (a) defaults.json 必须承载 tweet_detail_* 三字段的真值（非空字符串），
         // 否则四层解析会落到 config.rs 的 `{}` 兜底、请求被 X 拒（原子性约束）。
         let v: Value = serde_json::from_str(VENDORED_DEFAULTS).unwrap();
-        for key in &["tweet_detail_api_url", "tweet_features", "tweet_fieldtoggles"] {
+        for key in &[
+            "tweet_detail_api_url",
+            "tweet_features",
+            "tweet_fieldtoggles",
+        ] {
             let s = v
                 .get(*key)
                 .and_then(|x| x.as_str())

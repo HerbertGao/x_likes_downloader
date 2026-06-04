@@ -130,10 +130,15 @@ fn fixtures_base64_user_node_ids_are_placeholders() {
         for m in re.find_iter(&body) {
             seen += 1;
             let token = m.as_str();
-            let decoded = b64_decode(token)
-                .unwrap_or_else(|e| panic!("{}: undecodable User node id {token:?}: {e}", path.display()));
-            let decoded = String::from_utf8(decoded)
-                .unwrap_or_else(|e| panic!("{}: non-utf8 User node id {token:?}: {e}", path.display()));
+            let decoded = b64_decode(token).unwrap_or_else(|e| {
+                panic!(
+                    "{}: undecodable User node id {token:?}: {e}",
+                    path.display()
+                )
+            });
+            let decoded = String::from_utf8(decoded).unwrap_or_else(|e| {
+                panic!("{}: non-utf8 User node id {token:?}: {e}", path.display())
+            });
             assert!(
                 decoded.starts_with(&format!("User:{PLACEHOLDER_USER_ID_PREFIX}")),
                 "fixture {} has non-placeholder User node id decoding to {:?} (expected User:{}…)",
