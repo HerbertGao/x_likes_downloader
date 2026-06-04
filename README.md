@@ -1,5 +1,10 @@
 # X Likes Downloader
 
+[![release](https://img.shields.io/github/v/release/HerbertGao/x_likes_downloader?sort=semver&label=release)](https://github.com/HerbertGao/x_likes_downloader/releases)
+[![build](https://img.shields.io/github/actions/workflow/status/HerbertGao/x_likes_downloader/build.yml?branch=master&label=build)](https://github.com/HerbertGao/x_likes_downloader/actions/workflows/build.yml)
+![rust](https://img.shields.io/badge/rust-1.85%2B-orange?logo=rust)
+![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Linux%20%7C%20Windows-blue)
+
 用 Rust 写的 X（Twitter）点赞推文媒体下载器。两种用法：
 
 - **命令行工具**：一条命令把你点赞过的图片 / 视频全部下载、自动整理。
@@ -167,6 +172,20 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 ---
 
 ## 版本说明
+
+<details open>
+<summary><b>v2026.6.0 更新（新增 fetch_tweet：下载任意推文媒体）</b></summary>
+
+- **新增 `fetch_tweet` 能力**：按 URL 或 tweet_id 抓取**任意**推文（不再限于自己点赞过的）的媒体元数据，返回与 `list_likes` 同构的 `TweetSummary`（含 `media[]`）。
+  - CLI：`x_likes_downloader tweet get --url <url> | --id <id> [--json]`
+  - MCP：新增第 5 个工具 `fetch_tweet`（`tools/list` 4 → 5）；取回后把 `media[]` 传给 `download_media` 完成下载。
+- **两阶段错误分类**：HTTP 200 + GraphQL `errors[code:32]` 识别为 `auth_expired`；端点过期 `endpoint_stale` / 推文不可见 `tweet_unavailable` / 网络 `network_error` 各归其类；非 JSON body 容错不误判。
+- **网络健壮性**：TweetDetail 请求 30s 超时；构造期失败归 `internal_error`、传输期归 `network_error`，不再一刀切 network。
+- **兼容老推文**：覆盖 `TweetWithVisibilityResults` wrapper；焦点定位含 `rest_id` 软兜底。
+- **版本号切换为 CalVer**：`2.1.0 → 2026.6.0`。
+
+不变：CLI 既有行为、`download_media` 沙箱/续传/取消、各 host packaging 结构、凭据本地化。
+</details>
 
 <details>
 <summary><b>v2.1 更新（runtime cancellation + Range 续传 + 数值化进度）</b></summary>
