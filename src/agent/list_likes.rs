@@ -227,7 +227,7 @@ pub(crate) fn parse_likes_response(data: &Value) -> (Vec<Value>, Option<String>)
 }
 
 /// Convert a single `tweet-*` entry from X GraphQL into a flat TweetSummary.
-fn entry_to_summary(entry: &Value, include_raw: bool) -> Option<TweetSummary> {
+pub(crate) fn entry_to_summary(entry: &Value, include_raw: bool) -> Option<TweetSummary> {
     let tweet_result = entry
         .get("content")
         .and_then(|c| c.get("itemContent"))
@@ -313,7 +313,7 @@ fn entry_to_summary(entry: &Value, include_raw: bool) -> Option<TweetSummary> {
     })
 }
 
-fn extract_media(
+pub(crate) fn extract_media(
     tweet_id: &str,
     author_handle: &str,
     tweet_created_at: &str,
@@ -728,6 +728,59 @@ mod tests {
         let s = entry_to_summary(&entry, false).unwrap();
         assert_eq!(s.author_handle, "newhandle");
         assert_eq!(s.author_display_name, "New Display");
+    }
+
+    /// 老推文（2023）焦点 entry 的 `tweet_results.result.__typename` 为
+    /// `TweetWithVisibilityResults`，真正的 tweet 嵌在 `result.tweet`。
+    /// 验证 `entry_to_summary` 的 wrapper 解包能取到非空 legacy + media。
+    /// fixture 是完整 TweetDetail 响应，焦点 entry 在
+    /// `data.threaded_conversation_with_injections_v2.instructions[].entries[]`
+    /// 里 entryId 形如 `tweet-<id>`。
+    #[test]
+    fn entry_to_summary_unwraps_tweet_with_visibility_results() {
+        const FIXTURE: &str = include_str!(
+            "../../tests/fixtures/tweet_detail/old_2023_TweetWithVisibilityResults.json"
+        );
+        let resp: Value = serde_json::from_str(FIXTURE).unwrap();
+
+        let focal_entry = resp
+            .get("data")
+            .and_then(|d| d.get("threaded_conversation_with_injections_v2"))
+            .and_then(|t| t.get("instructions"))
+            .and_then(|i| i.as_array())
+            .and_then(|instructions| {
+                instructions.iter().find_map(|inst| {
+                    inst.get("entries")
+                        .and_then(|e| e.as_array())
+                        .and_then(|entries| {
+                            entries.iter().find(|e| {
+                                e.get("entryId")
+                                    .and_then(|id| id.as_str())
+                                    .map(|id| id.starts_with("tweet-"))
+                                    .unwrap_or(false)
+                            })
+                        })
+                })
+            })
+            .expect("fixture 应含一个 tweet-<id> 焦点 entry");
+
+        // Confirm the fixture really exercises the wrapper path.
+        let typename = focal_entry
+            .get("content")
+            .and_then(|c| c.get("itemContent"))
+            .and_then(|ic| ic.get("tweet_results"))
+            .and_then(|tr| tr.get("result"))
+            .and_then(|r| r.get("__typename"))
+            .and_then(|t| t.as_str());
+        assert_eq!(typename, Some("TweetWithVisibilityResults"));
+
+        let summary = entry_to_summary(focal_entry, false)
+            .expect("wrapper 焦点 entry 应能解析为 TweetSummary");
+        assert!(!summary.id.is_empty(), "解包后应取到非空 id");
+        assert!(
+            !summary.media.is_empty(),
+            "wrapper 解包后应取到非空 media"
+        );
     }
 
     /// 旧 schema：screen_name / name 在 user.legacy 下，仍要识别。

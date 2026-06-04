@@ -22,6 +22,7 @@ pub mod agent {
     pub mod auth_status;
     pub mod download_media;
     pub mod etag_cache;
+    pub mod fetch_tweet;
     pub mod import_curl;
     pub mod list_likes;
     pub mod mcp_server;
@@ -29,6 +30,7 @@ pub mod agent {
 
     pub use auth_status::auth_status;
     pub use download_media::download_media;
+    pub use fetch_tweet::fetch_tweet;
     pub use import_curl::import_curl;
     pub use list_likes::list_likes;
     pub use mcp_server::run_serve_mcp;

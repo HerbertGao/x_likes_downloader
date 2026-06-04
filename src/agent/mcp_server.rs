@@ -1,10 +1,11 @@
 //! MCP server (v2 Agent 接口).
 //!
-//! 用 [`rmcp`](https://docs.rs/rmcp) 把 4 个 lib 函数包成 MCP 工具：
+//! 用 [`rmcp`](https://docs.rs/rmcp) 把 5 个 lib 函数包成 MCP 工具：
 //! - `list_likes`      ← `agent::list_likes`
 //! - `download_media`  ← `agent::download_media`
 //! - `auth_status`     ← `agent::auth_status`
 //! - `setup_from_curl` ← `agent::import_curl`
+//! - `fetch_tweet`     ← `agent::fetch_tweet`
 //!
 //! Transport：仅 stdio。HTTP / SSE 不支持（凭据本地化原则）。
 //!
@@ -30,8 +31,10 @@ use rmcp::{tool, tool_handler, tool_router, Peer, RoleServer, ServerHandler, Ser
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::types::{DownloadOpts, ListOpts, MediaItem, NullSink, ProgressEvent, ProgressSink};
-use super::{auth_status, download_media, import_curl, list_likes};
+use super::types::{
+    DownloadOpts, FetchTweetRequest, ListOpts, MediaItem, NullSink, ProgressEvent, ProgressSink,
+};
+use super::{auth_status, download_media, fetch_tweet, import_curl, list_likes};
 use crate::error::ErrorPayload;
 
 // ============================================================================
@@ -236,6 +239,21 @@ impl XldMcpServer {
     ) -> Result<CallToolResult, McpError> {
         // import_curl 是同步函数（内存解析+写文件，无网络）；spawn_blocking 不必要
         match import_curl(&req.curl_text) {
+            Ok(out) => Ok(success_call_result(&out)),
+            Err(payload) => Ok(error_call_result(&payload)),
+        }
+    }
+
+    /// 按 URL 或 id 抓取任意一条推文的媒体元数据（不限于本账号点过赞的推文）。
+    #[tool(
+        name = "fetch_tweet",
+        description = "按 URL 或 id 抓取任意一条推文（不限于本账号点过赞的）的媒体元数据，返回与 list_likes 同构的扁平 TweetSummary。参数 `url`（形如 https://x.com/<handle>/status/<id>，亦接受 twitter.com / i/web/status / 带 query 或 photo 后缀）与 `id`（纯数字 tweet_id）恰好二选一。返回 FetchTweetOutput { tweet, schema_version }，Agent 应把 tweet.media[] 直接传给 download_media 下载。典型错误 kind：invalid_argument（url/id 同缺或同给、id 非数字、URL 无法解析）、tweet_unavailable（推文不存在/已删除/受保护/不可见，不应重试）、auth_expired（凭据失效，引导重新导入 cURL）、endpoint_stale、rate_limited、network_error。"
+    )]
+    async fn fetch_tweet(
+        &self,
+        Parameters(req): Parameters<FetchTweetRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        match fetch_tweet(req).await {
             Ok(out) => Ok(success_call_result(&out)),
             Err(payload) => Ok(error_call_result(&payload)),
         }

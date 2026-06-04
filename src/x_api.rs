@@ -103,6 +103,70 @@ impl XApi {
         Ok(all_tweets)
     }
 
+    /// Fetch the `TweetDetail` GraphQL response for a single tweet.
+    ///
+    /// 返回 `(http_status, body)`。鉴权 header 复用与 Likes 一致的构造；
+    /// 先取 HTTP 状态码再读 body，仅传输错误返 `Err`（供上层映射 network_error）；
+    /// 非 JSON body（如 401 HTML 页）解析为 `Value::Null` 而非 `Err`，非 2xx 不提前 `Err`，
+    /// 让上层分类器靠状态码正确判定。禁止把含 cookie/bearer 的 header 或完整 URL 打到 stderr。
+    pub async fn get_tweet_detail(&self, tweet_id: &str) -> Result<(u16, Value)> {
+        let variables = json!({
+            "focalTweetId": tweet_id,
+            "with_rux_injections": false,
+            "rankingMode": "Relevance",
+            "includePromotedContent": true,
+            "withCommunity": true,
+            "withQuickPromoteEligibilityTweetFields": true,
+            "withBirdwatchNotes": true,
+            "withVoice": true
+        });
+
+        let variables_str = serde_json::to_string(&variables)?;
+        let variables_encoded = urlencoding::encode(&variables_str);
+        let features_encoded = urlencoding::encode(&self.config.tweet_features);
+        let fieldtoggles_encoded = urlencoding::encode(&self.config.tweet_fieldtoggles);
+
+        let url = format!(
+            "{}?variables={}&features={}&fieldToggles={}",
+            self.config.tweet_detail_api_url,
+            variables_encoded,
+            features_encoded,
+            fieldtoggles_encoded
+        );
+
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            "Authorization",
+            format!("Bearer {}", self.config.bearer_token).parse()?,
+        );
+        headers.insert(
+            "Cookie",
+            format!(
+                "auth_token={}; ct0={}",
+                self.config.auth_token, self.config.ct0
+            )
+            .parse()?,
+        );
+        headers.insert("X-Csrf-Token", self.config.ct0.parse()?);
+        if !self.config.user_agent.is_empty() {
+            headers.insert("User-Agent", self.config.user_agent.parse()?);
+        }
+
+        let response = self
+            .client
+            .get(&url)
+            .headers(headers)
+            .timeout(std::time::Duration::from_secs(30))
+            .send()
+            .await?;
+
+        let status = response.status().as_u16();
+        let text = response.text().await?;
+        let resp = serde_json::from_str(&text).unwrap_or(Value::Null);
+
+        Ok((status, resp))
+    }
+
     fn parse_likes_response(&self, data: &Value) -> Result<(Vec<Value>, Option<String>)> {
         let mut tweets = Vec::new();
         let mut new_cursor = None;

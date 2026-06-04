@@ -30,7 +30,7 @@ min_binary_version: 2.1.0
 
 ## Agent 工具表
 
-Skill 通过 MCP 协议暴露**四个**工具。客户端在启动后会调用 `tools/list` 自动发现它们；下面给出每个工具的语义、参数、返回值与典型错误码。
+Skill 通过 MCP 协议暴露**五个**工具。客户端在启动后会调用 `tools/list` 自动发现它们；下面给出每个工具的语义、参数、返回值与典型错误码。
 
 ### 1. `list_likes`
 
@@ -198,6 +198,55 @@ Agent 据此可决定**重试策略**：`cancelled` item 通常表示用户主�
 
 ---
 
+### 5. `fetch_tweet`
+
+**用途**：按 URL 或 tweet_id 抓取任意一条推文的媒体元数据，返回与 `list_likes` 同构的 `TweetSummary`（含 `media[]`）。**只取元数据、自身不下载**——Agent 应当把返回的 `tweet.media[]` 元素直接作为 `download_media` 的 `items[]` 入参来完成下载。
+
+**参数**（恰好提供 `url` / `id` 其一）：
+
+| 参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `url` | string | 二选一 | 推文 URL，如 `https://x.com/alice/status/1234567890`（接受 `twitter.com` / `mobile.twitter.com` / `i/web/status/<id>` / 尾随 `/photo/1`、`/video/1` 等形态，带 query 也可） |
+| `id` | string | 二选一 | 纯数字 tweet_id，如 `1234567890` |
+
+`url` 与 `id` 必须**恰好提供其一**；都给或都不给均返回 `invalid_argument`。
+
+**返回内容**（`CallToolResult { isError: false }`，text 反序列化后为 `FetchTweetOutput`）：
+
+```jsonc
+{
+  "tweet": {
+    "id": "1234567890",
+    "author_handle": "alice",
+    "author_display_name": "Alice",
+    "text": "tweet 正文",
+    "created_at": "Thu Apr 06 15:24:15 +0000 2017",
+    "tweet_url": "https://x.com/alice/status/1234567890",
+    "is_retweet": false,
+    "is_reply": false,
+    "media": [
+      {
+        "tweet_id": "1234567890",
+        "type": "image",            // image | video | gif
+        "url": "https://pbs.twimg.com/media/AAA.jpg?format=jpg&name=orig",
+        "suggested_filename": "AAA.jpg",
+        "bytes": null
+      }
+    ],
+    "liked_at": null
+  },
+  "schema_version": 1
+}
+```
+
+`tweet` 字段集与 `list_likes` 输出的 `tweets[]` 元素**完全同构**（同一 `TweetSummary` 结构）。
+
+**典型错误 `kind`**（content 反序列化后含 `{kind, message, hint}`）：`invalid_argument`（`url`/`id` 缺失/同给/格式非法）/ `auth_expired` / `endpoint_stale` / `tweet_unavailable`（推文不存在/已删除/受保护/当前凭据不可见）/ `network_error`
+
+**Agent 行为约定**：取回 `FetchTweetOutput` 后，把 `tweet.media[]` 直接作为 `download_media` 的 `items[]` 下载即可（`MediaItem` 形态完全一致）；`fetch_tweet` 只取元数据，**不下载**。
+
+---
+
 ## 不暴露的能力
 
 以下 `x_likes_downloader` 子命令**不在** Agent 工具表内（也不在 MCP `tools/list` 暴露），请勿调用：
@@ -220,6 +269,8 @@ Agent 据此可决定**重试策略**：`cancelled` item 通常表示用户主�
 | 进度反馈 | `download_media` 在请求带 `_meta.progressToken` 时通过 MCP `notifications/progress` 推送；其它工具无进度 |
 | Cancellation | v2.0 收到 `notifications/cancelled` **被忽略**（仅 stderr 日志记录）；客户端如需强制终止可关闭 MCP 连接 |
 | `auth_expired` / `endpoint_stale` | Agent 应建议用户重新导出 cURL 并调用 `setup_from_curl` |
+| `tweet_unavailable`（仅 `fetch_tweet`） | Agent 应告知用户该推文不存在 / 已删除 / 受保护或当前凭据不可见，**不应重试** |
+| `fetch_tweet` 成功但 `tweet.media` 为空 | Agent 应提示用户该推文可能无媒体、或其视频为 HLS-only（当前不支持下载），而非把空 `media[]` 直接喂给 `download_media` 后静默无结果 |
 | `binary_missing` | Agent 应将用户引导到 GitHub Releases 安装页 |
 
 ---
