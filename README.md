@@ -93,7 +93,7 @@ npx skills add HerbertGao/x_likes_downloader -g -a claude-code
 
 只要客户端支持 Agent Skill、或能执行 shell 命令，就可以用。`npx skills` 支持 80+ 客户端（Claude Code、Codex CLI、Cursor、OpenCode、OpenClaw、Hermes、Gemini CLI、GitHub Copilot、Windsurf、Zed、Pi 等），完整列表与各自的安装路径见 [`vercel-labs/skills`](https://github.com/vercel-labs/skills#supported-agents)。
 
-> 工具表、双路径调用约定与错误码语义见 [`skills/x_likes/SKILL.md`](./skills/x_likes/SKILL.md)，安装步骤与常见问题见 [`skills/x_likes/README.md`](./skills/x_likes/README.md)。
+> 工具表、双路径调用约定与错误码语义见 [`.agents/skills/x_likes/SKILL.md`](./.agents/skills/x_likes/SKILL.md)，安装步骤与常见问题见 [`.agents/skills/x_likes/README.md`](./.agents/skills/x_likes/README.md)。
 
 ---
 

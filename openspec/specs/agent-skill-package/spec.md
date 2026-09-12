@@ -1,26 +1,50 @@
 ## 目的
 
-在 `skills/x_likes/` 维护一份可独立分发的 Agent Skill（SKILL.md 工具表与调用约定、defaults.json、README.md），定义 5 个 Agent 工具的用途与使用规范，并与 binary 版本绑定。
+在 `.agents/skills/x_likes/` 维护一份可独立分发的 Agent Skill（SKILL.md 工具表与调用约定、defaults.json、README.md），定义 5 个 Agent 工具的用途与使用规范，并与 binary 版本绑定。
 
-该目录是 skill 的唯一副本：它以标准 Agent Skill 布局（`skills/<name>/SKILL.md`）位于仓库根，可被 `npx skills add HerbertGao/x_likes_downloader` 直接发现并安装到任意受支持的客户端，不再维护任何 per-host adapter 副本。仓库不得携带其它会被该 CLI 发现的 skill。
+该目录是 skill 的唯一副本，且选它是因为它同时满足两个加载机制：
+
+- 它是 `npx skills` 的 well-known 发现容器（`.agents/skills/<name>/SKILL.md`），因此 `npx skills add HerbertGao/x_likes_downloader` 能直接发现并安装到任意受支持的客户端；
+- 它也是 Pi 的项目级加载路径（以及 22 个客户端共享的项目级落点），因此在本仓库内直接用 Pi 即可加载该 skill，无需额外副本或 settings 配置。
+
+不再维护任何 per-host adapter 副本。仓库不得携带其它会被该 CLI 发现的 skill。
 
 ## 需求
 
-### 需求:`skills/x_likes/` 目录结构
+### 需求:目录位置必须同时被两个加载机制识别
 
-系统必须在 `skills/x_likes/` 目录维护该 skill 的全部产物，包含以下文件：
+skill 必须位于 `.agents/skills/x_likes/`，不得改回仓库根的 `skills/x_likes/` 或任何 per-host 目录（如 `.claude/skills/`、`.pi/skills/`）。选择该路径的原因是它同时是 `npx skills` 的发现容器与 Pi 的项目级加载路径，从而一份产物服务两边：
 
-- `skills/x_likes/SKILL.md`：host-agnostic Agent 工具表与调用约定（中文）
-- `skills/x_likes/defaults.json`：公开协议参数兜底（无敏感字段）
-- `skills/x_likes/README.md`：安装与配置指引（中文）
+- `npx skills` 的 well-known 发现容器列表包含 `.agents/skills/`（而仓库根 `skills/` 也是容器，但对 Pi **不是**项目级 skill 路径——Pi 只把包内 `skills/` 当作 pi package 资源，仅在 `pi install` 一个包时生效）
+- Pi 的项目级加载路径为 `.pi/skills/` 与 `.agents/skills/`（在 `cwd` 及祖先目录中查找，上溯至 git 仓库根；项目需为 trusted）；全局路径为 `~/.pi/agent/skills/` 与 `~/.agents/skills/`
 
-`skills/x_likes/` 禁止包含任何用户私密字段、二进制可执行文件、或 Rust 源码；它必须是平铺目录，不进入 Cargo workspace。`defaults.json` 会被 `src/config.rs` 以 `include_str!` 编译进 binary，因此其路径是 binary 构建契约的一部分。
+因此该路径调整必须保持 `npx skills add` 可发现性与 Pi 项目级可加载性两者同时成立；移动目录时必须同步更新 `src/config.rs` 的 `include_str!`（binary 构建契约）、`scripts/check-skills.sh`、`scripts/version.sh` 与本 spec 中的路径引用。
+
+#### 场景:npx skills 仍可发现
+
+- **当** 在仓库根运行 `npx skills add . --list`
+- **那么** 发现的 skill 列表必须**只**包含 `x_likes` 一个
+
+#### 场景:Pi 项目级可加载
+
+- **当** 检查 `.agents/skills/x_likes/SKILL.md` 是否存在且 frontmatter 含非空 `description`
+- **那么** Pi 必须能将其作为项目级 skill 加载（路径属于 Pi 的项目级加载位置；实际加载需项目为 trusted）
+
+### 需求:`.agents/skills/x_likes/` 目录结构
+
+系统必须在 `.agents/skills/x_likes/` 目录维护该 skill 的全部产物，包含以下文件：
+
+- `.agents/skills/x_likes/SKILL.md`：host-agnostic Agent 工具表与调用约定（中文）
+- `.agents/skills/x_likes/defaults.json`：公开协议参数兜底（无敏感字段）
+- `.agents/skills/x_likes/README.md`：安装与配置指引（中文）
+
+`.agents/skills/x_likes/` 禁止包含任何用户私密字段、二进制可执行文件、或 Rust 源码；它必须是平铺目录，不进入 Cargo workspace。`defaults.json` 会被 `src/config.rs` 以 `include_str!` 编译进 binary，因此其路径是 binary 构建契约的一部分。
 
 仓库禁止再维护 per-host 的 skill 副本目录（`packaging/`）、自建 marketplace（`.claude-plugin/marketplace.json`、`.agents/plugins/marketplace.json`）或 SOT 同步脚本（`scripts/sync-skill.sh`）。
 
 #### 场景:目录结构存在
 
-- **当** 在主分支上 `ls skills/x_likes/`
+- **当** 在主分支上 `ls .agents/skills/x_likes/`
 - **那么** 必须看到 `SKILL.md`、`defaults.json`、`README.md` 三个文件
 
 #### 场景:无 per-host 副本
@@ -30,22 +54,22 @@
 
 #### 场景:无仓库自带开发 skill
 
-- **当** 检查 `.claude/skills/`、`.claude/commands/`、`.agents/skills/`
+- **当** 检查 `.claude/skills/`、`.claude/commands/`、`.agents/plugins/`，以及 `.agents/skills/` 下除 `x_likes/` 之外的条目
 - **那么** 必须不存在任何 `SKILL.md` 或 slash command 定义（`openspec-cn` 生成的 `openspec-*` skill 与 `/opsx:*` 命令均不得入库）——否则 `npx skills add` 会向用户展示与本 skill 无关的开发工具
 
 #### 场景:无用户私密字段
 
-- **当** 在 `skills/x_likes/defaults.json` 或该目录任何文件中查找 `auth_token` / `ct0` / `csrf` / `cookies` / `personalization_id` / `user_id` / `user_agent` 等用户私密字段
+- **当** 在 `.agents/skills/x_likes/defaults.json` 或该目录任何文件中查找 `auth_token` / `ct0` / `csrf` / `cookies` / `personalization_id` / `user_id` / `user_agent` 等用户私密字段
 - **那么** 这些字段必须不存在（注：`bearer_token` 是 X Web 公开 anonymous bearer，不属于此列；其位置由下方"defaults.json 字段定义"约束）
 
 #### 场景:defaults.json 可被 binary 内嵌
 
 - **当** 编译 crate
-- **那么** `src/config.rs` 的 `include_str!` 必须指向存在的 `skills/x_likes/defaults.json`，编译不得因路径缺失而失败
+- **那么** `src/config.rs` 的 `include_str!` 必须指向存在的 `.agents/skills/x_likes/defaults.json`，编译不得因路径缺失而失败
 
 ### 需求:`SKILL.md` 工具表声明
 
-`skills/x_likes/SKILL.md` 必须以一节明确声明 Agent 可调用的工具集，每个工具至少包含：名称、用途一句话、输入参数及类型、返回值结构概述、典型错误 `kind` 列表。声明的工具集必须为且仅为以下五个：
+`.agents/skills/x_likes/SKILL.md` 必须以一节明确声明 Agent 可调用的工具集，每个工具至少包含：名称、用途一句话、输入参数及类型、返回值结构概述、典型错误 `kind` 列表。声明的工具集必须为且仅为以下五个：
 
 - `list_likes(count?, all?, since_cursor?)` → 列点赞
 - `download_media(items[], subdir?, concurrency?)` → 按 MediaItem 数组下载到沙箱
@@ -129,7 +153,7 @@ SKILL.md 必须明确禁止以下使用模式：在循环中调用、在每次�
 
 #### 场景:Skill 文档含 auth_status 使用规范
 
-- **当** 阅读 `skills/x_likes/SKILL.md`
+- **当** 阅读 `.agents/skills/x_likes/SKILL.md`
 - **那么** 必须存在专门一节描述上述三种允许场景与禁止模式
 
 ### 需求:`download_media` 分批使用建议
@@ -138,12 +162,12 @@ SKILL.md 必须建议 Agent 在预期下载量较大时（item 数量超过 20 �
 
 #### 场景:Skill 文档含分批建议
 
-- **当** 阅读 `skills/x_likes/SKILL.md`
+- **当** 阅读 `.agents/skills/x_likes/SKILL.md`
 - **那么** 必须存在分批使用建议，明示触发分批的阈值与建议批次大小，并明确进度反馈走 MCP progress 通道
 
 ### 需求:`defaults.json` 字段定义
 
-`skills/x_likes/defaults.json` 必须为合法 JSON，包含且仅包含以下字段：
+`.agents/skills/x_likes/defaults.json` 必须为合法 JSON，包含且仅包含以下字段：
 
 - `likes_api_url`（字符串，X GraphQL `Likes` 端点完整 URL）
 - `likes_features`（字符串，features JSON 序列化文本，沿用 X Web 当前值）
@@ -158,7 +182,7 @@ SKILL.md 必须建议 Agent 在预期下载量较大时（item 数量超过 20 �
 
 #### 场景:JSON 合法且字段集封闭
 
-- **当** 解析 `skills/x_likes/defaults.json`
+- **当** 解析 `.agents/skills/x_likes/defaults.json`
 - **那么** 7 个必填键必须全部存在，且顶层键集合必须为 required∪{bearer_token} 的子集，无此范围外的字段
 
 #### 场景:含 TweetDetail 协议字段
@@ -173,7 +197,7 @@ SKILL.md 必须建议 Agent 在预期下载量较大时（item 数量超过 20 �
 
 ### 需求:`README.md` 安装旅程覆盖
 
-`skills/x_likes/README.md` 必须以陌生用户视角描述完整安装与首次使用流程，至少覆盖：
+`.agents/skills/x_likes/README.md` 必须以陌生用户视角描述完整安装与首次使用流程，至少覆盖：
 
 1. 通过 `npx skills add HerbertGao/x_likes_downloader` 安装 skill（含 `-g` / `-a <agent>` 变体）
 2. 检测或安装 `x_likes_downloader` 二进制（含 macOS / Linux / Windows 的下载命令片段，链接到 GitHub Releases）
@@ -186,7 +210,7 @@ README 必须以 host-agnostic 方式给出 MCP 注册配置示例（JSON 形态
 
 #### 场景:README 含核心步骤
 
-- **当** 阅读 `skills/x_likes/README.md`
+- **当** 阅读 `.agents/skills/x_likes/README.md`
 - **那么** 上述六个核心步骤必须全部出现且顺序合理
 
 #### 场景:README 明示边界
@@ -201,7 +225,7 @@ README 必须以 host-agnostic 方式给出 MCP 注册配置示例（JSON 形态
 
 ### 需求:Skill 与 binary 版本绑定
 
-`skills/x_likes/SKILL.md` 必须随同 `x_likes_downloader` binary 在同一 git tag / GitHub Release 中发布，禁止独立发版。
+`.agents/skills/x_likes/SKILL.md` 必须随同 `x_likes_downloader` binary 在同一 git tag / GitHub Release 中发布，禁止独立发版。
 
 SKILL.md 必须声明 `min_binary_version` 字段（形如 `min_binary_version: 2026.6.0`）。该字段必须由 `scripts/version.sh` 在升级 `Cargo.toml` 时同步更新到一致值。
 
@@ -215,7 +239,7 @@ SKILL.md 必须声明 `min_binary_version` 字段（形如 `min_binary_version: 
 #### 场景:版本字段同步
 
 - **当** 运行 `bash scripts/version.sh patch`（或 minor / major / 显式版本号）
-- **那么** `Cargo.toml` 与 `skills/x_likes/SKILL.md` 的 `min_binary_version` 必须更新到同一值
+- **那么** `Cargo.toml` 与 `.agents/skills/x_likes/SKILL.md` 的 `min_binary_version` 必须更新到同一值
 
 #### 场景:check 检测漂移
 

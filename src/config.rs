@@ -7,9 +7,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Vendored protocol defaults — embedded at compile time from
-/// `skills/x_likes/defaults.json` (SOT, shipped with the skill).
+/// `.agents/skills/x_likes/defaults.json` (SOT, shipped with the skill).
 /// These act as out-of-the-box fallbacks; users override via `xld setup` or env vars.
-const VENDORED_DEFAULTS: &str = include_str!("../skills/x_likes/defaults.json");
+const VENDORED_DEFAULTS: &str = include_str!("../.agents/skills/x_likes/defaults.json");
 
 /// 返回凭据文件的稳定路径，按以下优先级解析：
 ///
@@ -42,7 +42,7 @@ pub fn credentials_path() -> PathBuf {
 }
 
 /// Hardcoded fallback for X Web's public bearer token. Used only when neither
-/// env var, private_tokens.env, nor skills/x_likes/defaults.json supply one.
+/// env var, private_tokens.env, nor .agents/skills/x_likes/defaults.json supply one.
 const HARDCODED_BEARER: &str =
     "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3DbYqd8UMSvvy";
 
@@ -91,7 +91,7 @@ impl Config {
 
         let private_tokens = Self::load_private_tokens(&credentials_path())?;
         let defaults: Value = serde_json::from_str(VENDORED_DEFAULTS)
-            .context("解析 vendored skills/x_likes/defaults.json 失败")?;
+            .context("解析 vendored .agents/skills/x_likes/defaults.json 失败")?;
 
         Ok(Config {
             // 私密字段：来源固定为 private_tokens（不走三层）
@@ -231,7 +231,7 @@ impl Config {
 /// Priority (high → low):
 ///   1. env::var (driven by .env or actual env)
 ///   2. private_tokens.env (written by `xld setup` from cURL)
-///   3. skills/x_likes/defaults.json (vendored fallback)
+///   3. .agents/skills/x_likes/defaults.json (vendored fallback)
 ///   4. hardcoded fallback
 fn resolve_protocol_field(
     env_key: &str,
@@ -327,7 +327,7 @@ mod tests {
         ] {
             assert!(
                 !obj.contains_key(*forbidden),
-                "skills/x_likes/defaults.json 不允许包含敏感字段 {}",
+                ".agents/skills/x_likes/defaults.json 不允许包含敏感字段 {}",
                 forbidden
             );
         }

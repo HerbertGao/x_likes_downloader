@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Validate the x_likes skill artifact under skills/x_likes/.
+# Validate the x_likes skill artifact under .agents/skills/x_likes/.
 #
 # The skill is distributed as a plain Agent Skill (installable via `npx skills add`);
 # there are no per-host adapter copies to cross-check any more. What still matters:
@@ -25,7 +25,7 @@ err() {
 }
 ok() { echo -e "${GREEN}✓${NC} $*"; }
 
-SKILL_DIR="skills/x_likes"
+SKILL_DIR=".agents/skills/x_likes"
 SKILL_FILE="$SKILL_DIR/SKILL.md"
 DEFAULTS_FILE="$SKILL_DIR/defaults.json"
 
@@ -148,12 +148,12 @@ fi
 # ---- 5. credential-value leak scan --------------------------------------------------------
 
 echo ""
-echo "=== Credential leak scan (skills/) ==="
+echo "=== Credential leak scan (.agents/skills/) ==="
 n=0
 while IFS= read -r f; do
   scan_forbidden_text "$f"
   n=$((n + 1))
-done < <(find skills -type f \( -name '*.md' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \) | sort)
+done < <(find .agents/skills -type f \( -name '*.md' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' \) | sort)
 ok "scanned $n shipped skill artifact(s)"
 
 echo ""

@@ -82,7 +82,7 @@ update_readme_version() {
 # 更新 skill frontmatter 的 min_binary_version 字段
 # 用 awk 行级替换（仅在第一个 frontmatter 块内），不破坏 markdown 正文。
 update_sot_skill_min_version() {
-    local path="skills/x_likes/SKILL.md"
+    local path=".agents/skills/x_likes/SKILL.md"
     local newval="$1"
     if [ ! -f "$path" ]; then
         return 0

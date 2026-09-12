@@ -12,10 +12,17 @@
 npx skills add HerbertGao/x_likes_downloader
 ```
 
-加 `-g` 装到用户级（所有项目可用），加 `-a claude-code`（或 `codex` / `cursor` / `openclaw` …）指定目标客户端：
+加 `-g` 装到**用户级**（所有项目可用，`~/<agent>/skills/`），不加则装到**当前项目级** `./<agent>/skills/`：
 
 ```bash
 npx skills add HerbertGao/x_likes_downloader -g -a claude-code
+```
+
+推荐用 `-a universal`：它的项目级落点是 `./.agents/skills/x_likes/`，而这是 22 个客户端共享的路径（Codex、Cursor、OpenCode、Gemini CLI、GitHub Copilot、Kilo、Zed、Cline、Warp、Antigravity…），同时也是 Pi 的项目级加载路径之一——一次安装，两边都能读到。
+
+```bash
+npx skills add HerbertGao/x_likes_downloader -a universal
+# 只给 Pi：npx skills add HerbertGao/x_likes_downloader -a pi  → ./.pi/skills/x_likes/
 ```
 
 先预览不安装：
@@ -24,7 +31,7 @@ npx skills add HerbertGao/x_likes_downloader -g -a claude-code
 npx skills add HerbertGao/x_likes_downloader --list
 ```
 
-安装路径由 skills CLI 决定（`skills` 源目录 → 各客户端 `<agent>/skills/x_likes/`），无需手工放置。
+> Pi 只在本项目被 trusted 后才加载项目级 skill；`.agents/skills/` 会在 `cwd` 及祖先目录中寻找，上溯到 git 仓库根。
 
 ---
 
@@ -167,4 +174,4 @@ A: 使用 X 内部 GraphQL + cookie 严格意义上违反 X 的开发者协议�
 
 - [SKILL.md](./SKILL.md) — Agent 工具表、双路径调用约定、错误码语义
 - [defaults.json](./defaults.json) — 公开协议参数兜底（cURL 导入时被覆盖；同时被 binary 编译进去作为最后兜底）
-- [仓库主 README](../../README.md) — 人类 CLI 用法与构建说明
+- [仓库主 README](../../../README.md) — 人类 CLI 用法与构建说明
