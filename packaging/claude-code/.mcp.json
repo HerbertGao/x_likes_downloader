@@ -1,5 +1,0 @@
-{
-  "command": "x_likes_downloader",
-  "args": ["serve", "--mcp"],
-  "transport": "stdio"
-}

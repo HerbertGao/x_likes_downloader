@@ -1,9 +1,0 @@
-{
-  "command": "x_likes_downloader",
-  "args": [
-    "serve",
-    "--mcp"
-  ],
-  "transport": "stdio",
-  "minimum_xld_version": "2026.6.0"
-}

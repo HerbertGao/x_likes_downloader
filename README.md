@@ -55,61 +55,45 @@ x_likes_downloader organize    # （可选）按用户名分文件夹整理
 
 ---
 
-## 作为 AI Agent 工具使用（MCP）
+## 作为 AI Agent 工具使用（Skill + MCP）
 
-本项目内置 [MCP server](https://modelcontextprotocol.io/)，让 AI Agent 直接操作你的 X 点赞列表。装好后你可以直接对话：
+本项目既是一个 [Agent Skill](https://agentskills.io)，也内置 [MCP server](https://modelcontextprotocol.io/)，让 AI Agent 直接操作你的 X 点赞列表。装好后你可以直接对话：
 
 > "看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
 
-Agent 能用的 4 个工具：`list_likes`（列点赞）、`download_media`（下载）、`auth_status`（检查凭据）、`setup_from_curl`（导入凭据）。下载进度实时反馈，大文件可中断、可断点续传。
+Agent 能用的 5 个工具：`list_likes`（列点赞）、`download_media`（下载）、`fetch_tweet`（按 URL/id 抓任意推文）、`auth_status`（检查凭据）、`setup_from_curl`（导入凭据）。下载进度实时反馈，大文件可中断、可断点续传。
 
-### 第一步：装好 binary（所有 host 通用）
+skill 走**双路径**：客户端已注册 MCP server 时用 MCP 工具（有进度通知、下载可取消）；没注册则自动回落 `x_likes_downloader ... --json` 命令行，功能等价。
 
-MCP plugin **不自带** binary，先确保 `x_likes_downloader` ≥ 2026.6.0 在 PATH 里，并已 `setup` 过凭据（见上方快速开始）：
+### 第一步：装好 binary
+
+skill **不自带** binary，先确保 `x_likes_downloader` ≥ 2026.6.0 在 PATH 里，并已 `setup` 过凭据（见上方快速开始）：
 
 ```bash
 x_likes_downloader --version    # 应 ≥ 2026.6.0
 ```
 
-### 第二步：在你的 AI host 里装 plugin
-
-**Claude Code** —— 在 Claude Code 里输入这两条 slash 命令：
-
-```
-/plugin marketplace add HerbertGao/x_likes_downloader
-/plugin install x_likes@x_likes_downloader
-```
-
-> 用 `owner/repo` 简写（而不是完整 URL），Claude Code 会 clone 仓库，插件里的相对路径才能正确解析。`x_likes` 是插件名、`x_likes_downloader` 是 marketplace 名。
-
-装完即有 4 个 slash command：`/x_likes:list`、`/x_likes:download`、`/x_likes:setup`、`/x_likes:auth`。
-
-**Codex CLI** —— 添加 marketplace（同样用 `owner/repo` 简写）：
+### 第二步：装 skill
 
 ```bash
-codex plugin marketplace add HerbertGao/x_likes_downloader
+npx skills add HerbertGao/x_likes_downloader
 ```
 
-然后在 Codex 里运行 `/plugins`，选中 `x_likes` 安装启用。Codex 没有 `codex plugin install` 命令；若想手动启用，在 `~/.codex/config.toml` 加：
+加 `-g` 装到用户级（所有项目可用），加 `-a claude-code`（或 `codex` / `cursor` / `openclaw` …）指定目标客户端：
 
-```toml
-[plugins."x_likes@x_likes_downloader"]
-enabled = true
+```bash
+npx skills add HerbertGao/x_likes_downloader -g -a claude-code
 ```
 
-**其他 host**：OpenClaw / Hermes 见各自适配说明，路径见下表。
+### 第三步（可选）：注册 MCP server
 
-### Host 支持状态
+不注册也能用（Agent 自动回落 CLI）。注册的收益只有两个：下载进度通知，以及取消能真实中断在途下载。把 `x_likes_downloader serve --mcp` 写进你客户端的 MCP 配置即可，配置位置与格式见该客户端自己的文档。
 
-| Host | 状态 | 安装说明 |
-|---|---|---|
-| Claude Code | ✅ | [`packaging/claude-code/`](./packaging/claude-code/) |
-| Codex CLI | ✅ | [`packaging/codex/`](./packaging/codex/) |
-| OpenClaw | ✅ | [`packaging/openclaw/x_likes/`](./packaging/openclaw/x_likes/) |
-| Hermes | ✅ | [`packaging/hermes/`](./packaging/hermes/) |
-| Cursor | 🔜 v2.2 | [`packaging/cursor/`](./packaging/cursor/) |
+### 客户端支持
 
-> 工具表与调用约定见 [`packaging/skill/x_likes/SKILL.md`](./packaging/skill/x_likes/SKILL.md)，多 host 打包架构见 [`packaging/README.md`](./packaging/README.md)。
+只要客户端支持 Agent Skill、或能执行 shell 命令，就可以用。`npx skills` 支持 80+ 客户端（Claude Code、Codex CLI、Cursor、OpenCode、OpenClaw、Hermes、Gemini CLI、GitHub Copilot、Windsurf、Zed、Pi 等），完整列表与各自的安装路径见 [`vercel-labs/skills`](https://github.com/vercel-labs/skills#supported-agents)。
+
+> 工具表、双路径调用约定与错误码语义见 [`skills/x_likes/SKILL.md`](./skills/x_likes/SKILL.md)，安装步骤与常见问题见 [`skills/x_likes/README.md`](./skills/x_likes/README.md)。
 
 ---
 
@@ -145,7 +129,7 @@ bob, bob_backup
 ## 故障排除
 
 | 问题 | 排查 |
-|---|---|
+| --- | --- |
 | 认证失败 | 检查 `data/private_tokens.env` 是否存在且正确；重新 `setup` |
 | 网络错误 / 连不上 X | 检查或更换代理 |
 | 下载失败 | 检查网络和磁盘空间 |
@@ -206,7 +190,7 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 所有功能也提供 `--json` 模式（输出 JSON 信封，便于 shell pipeline / jq）：
 
 | 命令 | 用途 |
-|---|---|
+| --- | --- |
 | `setup` | 从 cURL 导入凭据 |
 | `download` | 下载点赞媒体 |
 | `organize` | 按用户名整理文件 |

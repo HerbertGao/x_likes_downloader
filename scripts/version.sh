@@ -63,7 +63,7 @@ update_cargo_version() {
         /^\[/ && !/^\[package\]/ { in_package=0 }
         in_package && /^version = / { $0="version = \"" ver "\"" }
         { print }
-    ' Cargo.toml > Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
+    ' Cargo.toml >Cargo.toml.tmp && mv Cargo.toml.tmp Cargo.toml
 }
 
 # 更新 README.md 版本引用
@@ -79,28 +79,10 @@ update_readme_version() {
     fi
 }
 
-# 用 jq 原子性更新 JSON 文件中的字段（写到临时文件再 mv，保证幂等 + 失败安全）。
-# $1 path, $2 jq update expression（如 '.metadata.version = $v'）, $3 new value
-update_json_field() {
-    local path="$1"
-    local expr="$2"
-    local newval="$3"
-    if [ ! -f "$path" ]; then
-        return 0
-    fi
-    if ! jq --arg v "$newval" "$expr" "$path" > "$path.tmp"; then
-        rm -f "$path.tmp"
-        print_error "更新 $path 失败（jq 表达式：$expr）"
-        return 1
-    fi
-    mv "$path.tmp" "$path"
-    print_success "已更新 $path"
-}
-
-# 更新 SOT SKILL.md frontmatter 的 min_binary_version 字段
+# 更新 skill frontmatter 的 min_binary_version 字段
 # 用 awk 行级替换（仅在第一个 frontmatter 块内），不破坏 markdown 正文。
 update_sot_skill_min_version() {
-    local path="packaging/skill/x_likes/SKILL.md"
+    local path="skills/x_likes/SKILL.md"
     local newval="$1"
     if [ ! -f "$path" ]; then
         return 0
@@ -125,47 +107,19 @@ update_sot_skill_min_version() {
                 exit 1
             }
         }
-    ' "$path" > "$path.tmp" || { rm -f "$path.tmp"; print_error "$path 缺少 min_binary_version 字段"; return 1; }
+    ' "$path" >"$path.tmp" || {
+        rm -f "$path.tmp"
+        print_error "$path 缺少 min_binary_version 字段"
+        return 1
+    }
     mv "$path.tmp" "$path"
     print_success "已更新 $path (min_binary_version=$newval)"
 }
 
-# 同步所有 packaging 版本字段（v2.1+）
-update_packaging_versions() {
+# 同步 skill 的版本字段。skill 以单目录形式发行（npx skills add），不再有 host adapter 副本。
+update_skill_versions() {
     local new_version=$1
-
-    update_json_field ".claude-plugin/marketplace.json" \
-        '.metadata.version = $v' "$new_version"
-
-    update_json_field ".agents/plugins/marketplace.json" \
-        '.version = $v' "$new_version"
-
-    update_json_field "packaging/claude-code/.claude-plugin/plugin.json" \
-        '.version = $v | .minimum_x_likes_downloader = $v' "$new_version"
-
-    update_json_field "packaging/codex/.codex-plugin/plugin.json" \
-        '.version = $v' "$new_version"
-
-    update_json_field "packaging/openclaw/x_likes/mcp-config.json" \
-        '.minimum_xld_version = $v' "$new_version"
-
     update_sot_skill_min_version "$new_version"
-
-    # 派生副本：跑 sync-skill.sh 让 host SKILL.md 副本同步新版本号。
-    # 用 `-f`（文件存在）而非 `-x`（可执行）：fresh clone 或 mode 丢失场景下脚本可能没有
-    # exec 位，但我们用 `bash <path>` 调用并不依赖 exec 位；`-x` 会让 sync 静默跳过，
-    # 导致派生副本的 min_binary_version 不更新（Cursor Bugbot 报告的真实漂移路径）。
-    if [ -f "scripts/sync-skill.sh" ]; then
-        if bash scripts/sync-skill.sh > /dev/null; then
-            print_success "已同步 SKILL.md 派生副本"
-        else
-            print_error "scripts/sync-skill.sh 执行失败"
-            return 1
-        fi
-    else
-        print_error "scripts/sync-skill.sh 不存在，无法同步派生副本"
-        return 1
-    fi
 }
 
 # 计算新版本号
@@ -173,28 +127,28 @@ calculate_new_version() {
     local current=$1
     local bump_type=$2
 
-    IFS='.' read -ra parts <<< "$current"
+    IFS='.' read -ra parts <<<"$current"
     local major=${parts[0]}
     local minor=${parts[1]}
     local patch=${parts[2]}
     local build=${parts[3]:-0}
 
     case $bump_type in
-        major)
-            echo "$((major + 1)).0.0"
-            ;;
-        minor)
-            echo "${major}.$((minor + 1)).0"
-            ;;
-        patch)
-            echo "${major}.${minor}.$((patch + 1))"
-            ;;
-        build)
-            echo "${major}.${minor}.${patch}.$((build + 1))"
-            ;;
-        *)
-            echo ""
-            ;;
+    major)
+        echo "$((major + 1)).0.0"
+        ;;
+    minor)
+        echo "${major}.$((minor + 1)).0"
+        ;;
+    patch)
+        echo "${major}.${minor}.$((patch + 1))"
+        ;;
+    build)
+        echo "${major}.${minor}.${patch}.$((build + 1))"
+        ;;
+    *)
+        echo ""
+        ;;
     esac
 }
 
@@ -206,14 +160,14 @@ check_versions() {
     echo ""
     echo "版本号检查："
     echo "  Cargo.toml: $cargo_version"
-    
+
     if [ -z "$readme_version" ]; then
         echo "  README.md:  (未找到版本号)"
         print_warning "README.md 中未找到版本号"
         exit 1
     else
         echo "  README.md:  $readme_version"
-        
+
         if [ "$cargo_version" = "$readme_version" ]; then
             print_success "版本一致性检查通过"
         else
@@ -283,7 +237,7 @@ do_version_bump() {
     print_success "已更新 Cargo.toml"
 
     update_readme_version "$new_version"
-    update_packaging_versions "$new_version"
+    update_skill_versions "$new_version"
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -303,38 +257,38 @@ main() {
     local command=${1:-}
 
     case $command in
-        "")
-            show_current_version
-            ;;
-        help|--help|-h)
+    "")
+        show_current_version
+        ;;
+    help | --help | -h)
+        show_usage
+        ;;
+    check)
+        check_versions
+        ;;
+    major | minor | patch)
+        local current_version=$(get_cargo_version)
+        local new_version=$(calculate_new_version "$current_version" "$command")
+        do_version_bump "$current_version" "$new_version"
+        ;;
+    build)
+        local current_version=$(get_cargo_version)
+        local new_version=$(calculate_new_version "$current_version" "$command")
+        do_version_bump "$current_version" "$new_version"
+        ;;
+    *)
+        # 检查是否是自定义版本号
+        if validate_semver "$command"; then
+            local current_version=$(get_cargo_version)
+            do_version_bump "$current_version" "$command"
+        else
+            print_error "无效的命令或版本号格式: $command"
+            echo ""
+            echo "版本号必须符合 semver 格式: X.Y.Z (例如: 1.0.0, 0.2.1)"
             show_usage
-            ;;
-        check)
-            check_versions
-            ;;
-        major|minor|patch)
-            local current_version=$(get_cargo_version)
-            local new_version=$(calculate_new_version "$current_version" "$command")
-            do_version_bump "$current_version" "$new_version"
-            ;;
-        build)
-            local current_version=$(get_cargo_version)
-            local new_version=$(calculate_new_version "$current_version" "$command")
-            do_version_bump "$current_version" "$new_version"
-            ;;
-        *)
-            # 检查是否是自定义版本号
-            if validate_semver "$command"; then
-                local current_version=$(get_cargo_version)
-                do_version_bump "$current_version" "$command"
-            else
-                print_error "无效的命令或版本号格式: $command"
-                echo ""
-                echo "版本号必须符合 semver 格式: X.Y.Z (例如: 1.0.0, 0.2.1)"
-                show_usage
-                exit 1
-            fi
-            ;;
+            exit 1
+        fi
+        ;;
     esac
 }
 
