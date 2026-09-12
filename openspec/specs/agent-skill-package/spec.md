@@ -52,10 +52,21 @@ skill 必须位于 `.agents/skills/x_likes/`，不得改回仓库根的 `skills/
 - **当** 检查仓库根与 `scripts/`
 - **那么** 必须不存在 `packaging/` 目录、`.claude-plugin/marketplace.json`、`.agents/plugins/marketplace.json`、`scripts/sync-skill.sh`、`scripts/check-packaging.sh`
 
-#### 场景:无仓库自带开发 skill
+#### 场景:无会被发现的无关 skill
 
-- **当** 检查 `.claude/skills/`、`.claude/commands/`、`.agents/plugins/`，以及 `.agents/skills/` 下除 `x_likes/` 之外的条目
-- **那么** 必须不存在任何 `SKILL.md` 或 slash command 定义（`openspec-cn` 生成的 `openspec-*` skill 与 `/opsx:*` 命令均不得入库）——否则 `npx skills add` 会向用户展示与本 skill 无关的开发工具
+- **当** 检查 `.claude/skills/`、`.claude/commands/`、`.agents/plugins/`
+- **那么** 必须不存在任何 `SKILL.md` 或 slash command 定义（`openspec-cn` 生成的 `openspec-*` skill 与 `/opsx:*` 命令均不得入库）
+- **并且** `.agents/skills/` 下除 `x_likes/` 之外的 skill（如 `x-organize`）必须带 `metadata.internal: true`，使 `npx skills add` 的常规发现仍只展示 `x_likes`
+
+#### 场景:内部 skill 不污染公开发现
+
+- **当** 在仓库根运行 `npx skills add . --list`，且 `.agents/skills/` 下存在带 `metadata.internal: true` 的 skill
+- **那么** 输出仍必须**只**包含 `x_likes`（带 `INSTALL_INTERNAL_SKILLS=1` 时才可见内部 skill）
+
+#### 场景:内部 skill 不携带个人路径
+
+- **当** 搜索 `.agents/skills/` 全部文件
+- **那么** 必须不存在用户个人媒体库的绝对路径（如 `/Volumes/<用户>/Dropbox/...`）或任何真实凭据；路径必须由用户级配置或环境变量提供
 
 #### 场景:无用户私密字段
 
