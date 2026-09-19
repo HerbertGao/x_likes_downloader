@@ -148,7 +148,7 @@ impl Config {
                 "likes_api_url",
                 &private_tokens,
                 &defaults,
-                "https://x.com/i/api/graphql/nWpDa3j6UoobbTNcFu_Uog/Likes",
+                "https://x.com/i/api/graphql/XHn_Tw60c6pi0n3DGhpwiA/Likes",
             ),
             likes_features: resolve_protocol_field(
                 "LIKES_FEATURES",
@@ -169,7 +169,7 @@ impl Config {
                 "tweet_detail_api_url",
                 &private_tokens,
                 &defaults,
-                "https://x.com/i/api/graphql/6uCvnic3m5reVuehkvHa3w/TweetDetail",
+                "https://x.com/i/api/graphql/zoF7_t363wZyzylk-BLfZQ/TweetDetail",
             ),
             tweet_features: resolve_protocol_field(
                 "TWEET_FEATURES",
