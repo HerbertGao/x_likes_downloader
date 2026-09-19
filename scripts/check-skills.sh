@@ -119,7 +119,7 @@ if [[ -f "$SKILL_FILE" ]]; then
   desc=$(extract_frontmatter_field "$SKILL_FILE" description)
   minver=$(extract_frontmatter_field "$SKILL_FILE" min_binary_version)
 
-  [[ "$name" == "x_likes" ]] || err "$SKILL_FILE frontmatter 'name' must be 'x_likes'; got '${name:-<missing>}'"
+  [[ "$name" == "x-likes" ]] || err "$SKILL_FILE frontmatter 'name' must be 'x-likes'; got '${name:-<missing>}'"
   [[ -n "$desc" ]] || err "$SKILL_FILE frontmatter missing 'description'"
   if [[ -z "$minver" ]]; then
     err "$SKILL_FILE frontmatter missing 'min_binary_version'"

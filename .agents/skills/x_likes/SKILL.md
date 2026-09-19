@@ -1,5 +1,5 @@
 ---
-name: x_likes
+name: x-likes
 description: Operate the user's own X (Twitter) Likes via natural language — list likes, download media, fetch any tweet's media, check credential health. Prefers the local `x_likes_downloader serve --mcp` MCP server (5 tools) and falls back to the `x_likes_downloader ... --json` CLI when MCP is unavailable. Works in any agent with shell access. All credentials stay on the user's machine.
 min_binary_version: 2026.6.0
 ---
