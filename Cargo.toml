@@ -1,6 +1,6 @@
 [package]
 name = "x_likes_downloader"
-version = "2026.6.1"
+version = "2026.9.0"
 edition = "2021"
 
 [lib]

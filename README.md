@@ -166,7 +166,7 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 - **两阶段错误分类**：HTTP 200 + GraphQL `errors[code:32]` 识别为 `auth_expired`；端点过期 `endpoint_stale` / 推文不可见 `tweet_unavailable` / 网络 `network_error` 各归其类；非 JSON body 容错不误判。
 - **网络健壮性**：TweetDetail 请求 30s 超时；构造期失败归 `internal_error`、传输期归 `network_error`，不再一刀切 network。
 - **兼容老推文**：覆盖 `TweetWithVisibilityResults` wrapper；焦点定位含 `rest_id` 软兜底。
-- **版本 2026.6.1`。
+- **版本 2026.9.0`。
 
 不变：CLI 既有行为、`download_media` 沙箱/续传/取消、各 host packaging 结构、凭据本地化。
 </details>
