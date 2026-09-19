@@ -151,6 +151,7 @@ create_version_commit() {
     git add Cargo.toml
     [ -f "Cargo.lock" ] && git add Cargo.lock
     [ -f "README.md" ] && git add README.md
+    [ -f ".agents/skills/x_likes/SKILL.md" ] && git add .agents/skills/x_likes/SKILL.md
 
     # 检查是否有更改
     if git diff --cached --quiet; then
