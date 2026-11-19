@@ -119,12 +119,10 @@ command -v gh >/dev/null 2>&1 || die "未找到 gh"
 export GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
 [[ -n ${GH_TOKEN:-} || -n ${GH_MOCK_DIR:-} ]] || die "缺少 GH_TOKEN"
 
-list_head=$branch
-if [[ -n ${GITHUB_REPOSITORY_OWNER:-} ]]; then
-    list_head="${GITHUB_REPOSITORY_OWNER}:${branch}"
-fi
+# gh pr list --head 只接受分支名。owner:branch 会被忽略或匹配不到，
+# 随后 pr create 会因为 PR 已存在而失败。见 `gh pr list --help`。
 pr=$(
-    gh pr list --head "$list_head" --base "$base" --state open \
+    gh pr list --head "$branch" --base "$base" --state open \
         --json number -q '.[0].number // empty'
 )
 if [[ -n $pr ]]; then

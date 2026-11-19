@@ -46,6 +46,18 @@ set -euo pipefail
 mkdir -p "$GH_MOCK_DIR"
 printf '%s\n' "$*" >>"$GH_MOCK_DIR/log"
 if [[ $1 == pr && $2 == list ]]; then
+    prev=""
+    head_arg=""
+    for arg in "$@"; do
+        if [[ $prev == --head ]]; then
+            head_arg=$arg
+        fi
+        prev=$arg
+    done
+    if [[ $head_arg == *:* ]]; then
+        echo "gh pr list --head does not accept owner:branch ($head_arg)" >&2
+        exit 1
+    fi
     if [[ -f $GH_MOCK_DIR/number ]]; then
         cat "$GH_MOCK_DIR/number"
     fi
@@ -160,6 +172,7 @@ run_open() {
         env -u RELEASE_EXPLICIT_VERSION \
             PATH="$MOCK_BIN:$PATH" \
             GH_MOCK_DIR="$MOCK" \
+            GITHUB_REPOSITORY_OWNER=HerbertGao \
             RELEASE_ALLOW_PUSH=1 \
             RELEASE_SKIP_CARGO=1 \
             RELEASE_SKIP_SKILL_CHECK=1 \
