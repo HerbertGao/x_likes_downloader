@@ -1,16 +1,25 @@
 name: Release
 
+# 发版流程（参考 herbertgao-skills，适配 Rust/GitHub Releases）：
+# 1) workflow_dispatch(version)（或 `scripts/release.sh <ver>`）→ 开/更新 release PR，
+#    只做版本号统一（Cargo.toml / Cargo.lock / README / SKILL.md min_binary_version）。
+# 2) 合并该 PR 到 master → 自动打 annotated tag vN.N.N、建 draft Release、构建 6 平台并发布。
+# 3) 手动推送 vN.N.N tag 仍是恢复路径：跳过版本 bump，直接构建并发布。
 on:
-  # Tag 推送时触发（格式：v*）
-  push:
-    tags:
-      - 'v*'
-
-  # 手动触发
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (N.N.N, no leading v)"
+        required: true
+        type: string
+  push:
+    branches: [master]
+    tags:
+      - "v[0-9]*"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # 隔离 prepare / publish；绝不取消半完成的发布。
+  group: release-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -18,48 +27,308 @@ env:
   CARGO_TERM_COLOR: always
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  quality-checks:
-    name: Quality Checks
-    uses: ./.github/workflows/reusable-quality-checks.yml
-
-  create-release:
-    name: 创建 Release
-    needs: [quality-checks]
+  # ---------------------------------------------------------------------------
+  # 1) 手动触发：统一版本号并开/更新 release PR
+  # ---------------------------------------------------------------------------
+  prepare-release:
+    name: 准备 release PR
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    outputs:
-      version: ${{ steps.get_version.outputs.version }}
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          # 需要 token 推送 release 分支。
+          persist-credentials: true
 
-      - name: 获取版本号
-        id: get_version
+      - name: 校验版本输入
+        id: ver
+        env:
+          RAW: ${{ inputs.version }}
         run: |
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            VERSION=${GITHUB_REF#refs/tags/v}
-          else
-            VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          set -euo pipefail
+          ver="${RAW#v}"
+          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::invalid version '$RAW' (want N.N.N)"
+            exit 1
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
+          echo "branch=release/v$ver" >> "$GITHUB_OUTPUT"
 
-      - name: 创建 Release
+      - name: 拒绝已存在的 tag
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1 ||
+            git ls-remote --exit-code --tags origin \
+              "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::tag $TAG already exists — pick a new version"
+            exit 1
+          fi
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 统一版本号
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          scripts/version.sh "$VER"
+          # Cargo.lock 里也记录了本 crate 的版本，cargo metadata 会刷新它（不编译）。
+          cargo metadata --format-version 1 > /dev/null
+
+      - name: 校验版本号已收敛
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          cargo_ver=$(
+            sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' \
+              Cargo.toml | head -1
+          )
+          [[ "$cargo_ver" == "$VER" ]] || {
+            echo "::error file=Cargo.toml::version '$cargo_ver' != '$VER'"
+            exit 1
+          }
+          skill_md=".agents/skills/x_likes/SKILL.md"
+          grep -q "^min_binary_version: $VER$" "$skill_md" || {
+            echo "::error file=$skill_md::min_binary_version != $VER"
+            exit 1
+          }
+          bash scripts/check-skills.sh
+
+      - name: 提交并推送 release 分支
+        env:
+          VER: ${{ steps.ver.outputs.version }}
+          BRANCH: ${{ steps.ver.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout -B "$BRANCH"
+          git add Cargo.toml Cargo.lock README.md \
+            .agents/skills/x_likes/SKILL.md
+          if git diff --cached --quiet; then
+            echo "::error::nothing to bump (already $VER everywhere)."
+            echo "::error::If a prior release PR stalled,"
+            echo "::error::close it or pick a new version."
+            exit 1
+          fi
+          git commit -m "chore(release): 版本统一到 $VER"
+          git push -u origin "HEAD:refs/heads/$BRANCH" --force-with-lease
+
+      - name: 开或更新 release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          BRANCH: ${{ steps.ver.outputs.branch }}
+          BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          title="chore(release): 版本统一到 ${VER}"
+          body=$(cat <<MD
+          ## Release ${TAG}
+
+          本 PR 只统一版本号：\`Cargo.toml\` / \`Cargo.lock\` / \`README.md\` /
+          \`.agents/skills/x_likes/SKILL.md\` 的
+          \`min_binary_version\`，由 \`scripts/version.sh\` 完成。
+
+          **合并到 \`${BASE}\` 后会自动：**
+          1. 在该提交上创建 annotated tag \`${TAG}\`
+          2. 创建 draft Release，构建 6 平台并上传产物
+          3. 发布 Release，并写入下载表格
+
+          ### 维护者
+          - 发起：\`scripts/release.sh ${VER}\`
+          - 或：\`gh workflow run release.yml -f version=${VER}\`
+          - 检查本 PR 全绿后合并
+          - 不要在本地手动打 tag（tag 推送仅作为恢复路径）
+          MD
+          )
+          body=$(printf '%s\n' "$body" | sed 's/^[[:space:]]*//')
+
+          pr=$(
+            gh pr list --head "$BRANCH" --base "$BASE" \
+              --state open --json number -q '.[0].number // empty'
+          )
+          if [[ -n "$pr" ]]; then
+            echo "updating existing PR #$pr"
+            gh pr edit "$pr" --title "$title" --body "$body"
+            gh pr view "$pr" --json url -q .url
+          else
+            gh pr create --base "$BASE" --head "$BRANCH" \
+              --title "$title" --body "$body"
+          fi
+
+  # ---------------------------------------------------------------------------
+  # 2) push 触发：解析版本（release 提交或 tag），决定是否发版
+  # ---------------------------------------------------------------------------
+  resolve:
+    name: 解析版本
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.ver.outputs.should_release }}
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # 完整历史 + tags：用于识别 release 提交与检查 tag 是否已存在。
+          fetch-depth: 0
+
+      - name: 解析版本
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          should=false
+          ver=""
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            # 恢复路径：手动推送的版本 tag
+            ver="${GITHUB_REF_NAME#v}"
+            should=true
+          elif [[ "$GITHUB_REF" == refs/heads/master ]]; then
+            # 只有 release 提交才发版：squash/rebase 保留 PR 标题，
+            # merge commit 形如 "Merge pull request #N from .../release/vX.Y.Z"。
+            subject=$(git log -1 --pretty=%s)
+            ver=$(printf '%s\n' "$subject" |
+              sed -nE \
+                's/^chore\(release\): 版本统一到 ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+            if [[ -z "$ver" ]]; then
+              ver=$(printf '%s\n' "$subject" |
+                sed -nE 's/.*\/release\/v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+            fi
+            if [[ -n "$ver" ]]; then
+              if git rev-parse -q --verify "refs/tags/v$ver" \
+                >/dev/null 2>&1; then
+                echo "::notice::tag v$ver already exists — skipping"
+                echo "::notice::use a tag push to rebuild"
+                ver=""
+              else
+                should=true
+              fi
+            else
+              echo "Not a release commit ($subject) — nothing to publish"
+            fi
+          fi
+
+          if [[ "$should" == "true" ]] &&
+            [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::invalid version '$ver'"
+            exit 1
+          fi
+
+          echo "should_release=$should" >> "$GITHUB_OUTPUT"
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # 3) 质量门禁（仅真正发版时跑）
+  # ---------------------------------------------------------------------------
+  quality-checks:
+    name: Quality Checks
+    needs: resolve
+    if: needs.resolve.outputs.should_release == 'true'
+    uses: ./.github/workflows/reusable-quality-checks.yml
+
+  # ---------------------------------------------------------------------------
+  # 4) 打 tag + 建 draft Release
+  # ---------------------------------------------------------------------------
+  create-release:
+    name: 创建 tag 与 Release
+    needs: [resolve, quality-checks]
+    if: needs.resolve.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ needs.resolve.outputs.version }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # 需要 token 推送 annotated tag。
+          persist-credentials: true
+
+      - name: 校验 tag 与代码版本一致
+        env:
+          VER: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          cargo_ver=$(
+            sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' \
+              Cargo.toml | head -1
+          )
+          [[ "$cargo_ver" == "$VER" ]] || {
+            echo "::error file=Cargo.toml::version '$cargo_ver' != tag 'v$VER'"
+            exit 1
+          }
+          skill_md=".agents/skills/x_likes/SKILL.md"
+          grep -q "^min_binary_version: $VER$" "$skill_md" || {
+            echo "::error file=$skill_md::min_binary_version != $VER"
+            exit 1
+          }
+
+      - name: 创建 annotated tag
+        env:
+          VER: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v$VER" >/dev/null 2>&1; then
+            echo "tag v$VER already exists (recovery path) — skip creation"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "v$VER" -m "Release v$VER"
+            git push origin "refs/tags/v$VER"
+          fi
+
+      - name: 检查 Release 是否已存在
+        id: rel
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VER: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          if gh release view "v$VER" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 创建 draft Release
+        if: steps.rel.outputs.exists != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.get_version.outputs.version }}
-          name: x_likes_downloader v${{ steps.get_version.outputs.version }}
+          tag_name: v${{ needs.resolve.outputs.version }}
+          name: x_likes_downloader v${{ needs.resolve.outputs.version }}
           draft: true
           prerelease: false
           generate_release_notes: true
 
+  # ---------------------------------------------------------------------------
+  # 5) 构建 6 平台
+  # ---------------------------------------------------------------------------
   build:
     name: 构建 ${{ matrix.platform }}
-    needs: [quality-checks, create-release]
-    if: startsWith(github.ref, 'refs/tags/')
+    needs: [create-release]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -113,7 +382,9 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             target/
-          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: >-
+            ${{ runner.os }}-${{ matrix.target }}-cargo-
+            ${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
@@ -121,13 +392,16 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
 
       - name: 构建
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+            linker=aarch64-linux-gnu-gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="$linker"
           fi
           cargo build --release --target ${{ matrix.target }}
 
@@ -136,7 +410,6 @@ jobs:
         run: |
           mkdir -p dist
 
-          # 确定源文件路径
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             SRC="target/${{ matrix.target }}/release/x_likes_downloader.exe"
           else
@@ -158,10 +431,15 @@ jobs:
           path: dist/*
           retention-days: 90
 
-  upload-to-release:
-    name: 上传产物到 Release
+  # ---------------------------------------------------------------------------
+  # 6) 上传产物 + 发布（draft → published）
+  # ---------------------------------------------------------------------------
+  publish:
+    name: 上传产物并发布
     needs: [create-release, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: 下载所有构建产物
         uses: actions/download-artifact@v4
@@ -170,69 +448,39 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: 上传到 Release
+      - name: 上传并发布
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.create-release.outputs.version }}
           files: dist/*
           draft: false
 
-  release-summary:
-    name: 发布总结
-    needs: [create-release, upload-to-release]
-    runs-on: ubuntu-latest
-    if: always() && needs.create-release.result != 'skipped'
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 更新 Release 说明
-        if: needs.upload-to-release.result == 'success'
+      - name: 写入下载表格
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.create-release.outputs.version }}
         run: |
-          VERSION=${{ needs.create-release.outputs.version }}
-          REPO=${{ github.repository }}
-          BASE_URL="https://github.com/${REPO}/releases/download/v${VERSION}"
-
-          # 生成下载表格
-          DOWNLOAD_TABLE=$(cat << 'EOF'
-          ## 下载
-
-          | 架构 | Linux | macOS | Windows |
-          |------|-------|-------|---------|
-          | x86_64 (Intel) | [下载](BASE_URL/x_likes_downloader_linux_x86_64) | [下载](BASE_URL/x_likes_downloader_macos_x86_64) | [下载](BASE_URL/x_likes_downloader_windows_x86_64.exe) |
-          | ARM64 | [下载](BASE_URL/x_likes_downloader_linux_arm64) | [下载](BASE_URL/x_likes_downloader_macos_arm64) | [下载](BASE_URL/x_likes_downloader_windows_arm64.exe) |
-
-          EOF
+          set -euo pipefail
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}"
+          l64="$BASE_URL/x_likes_downloader_linux_x86_64"
+          m64="$BASE_URL/x_likes_downloader_macos_x86_64"
+          w64="$BASE_URL/x_likes_downloader_windows_x86_64.exe"
+          la="$BASE_URL/x_likes_downloader_linux_arm64"
+          ma="$BASE_URL/x_likes_downloader_macos_arm64"
+          wa="$BASE_URL/x_likes_downloader_windows_arm64.exe"
+          hdr="| 架构 | Linux | macOS | Windows |"
+          sep="|------|-------|-------|---------|"
+          r64="| x86_64 | [下载]($l64) | [下载]($m64) | [下载]($w64) |"
+          ra="| ARM64 | [下载]($la) | [下载]($ma) | [下载]($wa) |"
+          DOWNLOAD_TABLE=$(
+            printf '## 下载\n\n%s\n%s\n%s\n%s\n\n' \
+              "$hdr" "$sep" "$r64" "$ra"
           )
-
-          # 替换占位符
-          DOWNLOAD_TABLE="${DOWNLOAD_TABLE//BASE_URL/$BASE_URL}"
-
-          # 获取当前 Release body
           CURRENT_BODY=$(gh release view "v${VERSION}" --json body -q '.body')
-
-          # 组合新的 Release body
-          NEW_BODY="${DOWNLOAD_TABLE}
-
-          ## 更新日志
-
-          ${CURRENT_BODY}"
-
-          # 更新 Release (使用 --notes-file - 从 stdin 读取以避免 shell 转义问题)
-          echo "$NEW_BODY" | gh release edit "v${VERSION}" --notes-file -
-
-      - name: 检查发布状态
-        run: |
-          echo "Release: v${{ needs.create-release.outputs.version }}"
-          if [ "${{ needs.upload-to-release.result }}" == "success" ]; then
-            echo "所有平台构建并上传成功"
-            echo ""
-            echo "下载地址："
-            echo "https://github.com/${{ github.repository }}/releases/tag/v${{ needs.create-release.outputs.version }}"
+          if [[ "$CURRENT_BODY" == "## 下载"* ]]; then
+            echo "download table already present — skipping"
             exit 0
-          else
-            echo "部分平台构建失败"
-            exit 1
           fi
+          printf '%s\n\n## 更新日志\n\n%s\n' \
+            "$DOWNLOAD_TABLE" "$CURRENT_BODY" |
+            gh release edit "v${VERSION}" --notes-file -

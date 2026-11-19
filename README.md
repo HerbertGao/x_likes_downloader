@@ -155,6 +155,21 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 
 ---
 
+## 发布流程（维护者）
+
+发版走「release PR → 合并 → 自动打 tag / 构建 / 发布」，不在本地打 tag：
+
+```bash
+./scripts/release.sh 2026.12.0        # 或 major / minor / patch
+```
+
+1. CI 在 `release/v<ver>` 分支上用 `scripts/version.sh` 统一版本号（`Cargo.toml`、`Cargo.lock`、`README.md`、`SKILL.md` 的 `min_binary_version`），并开/更新 release PR。
+2. 合并该 PR 到 `master` 后，CI 自动创建 annotated tag `v<ver>`、构建 6 平台、发布 GitHub Release（含下载表格与自动生成的更新日志）。
+3. 手工推送 `v<ver>` tag 仍是恢复路径：跳过版本统一，直接构建并发布。
+4. 本地 `scripts/version.sh [patch|minor|major|x.y.z|check]` 仍可用于查看/校验版本。
+
+---
+
 ## 版本说明
 
 <details open>
