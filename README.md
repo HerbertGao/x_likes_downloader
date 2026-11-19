@@ -160,16 +160,22 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 
 ## 发布流程（维护者）
 
-发版走「release PR → 合并 → 自动打 tag / 构建 / 发布」，不在本地打 tag：
+发版走「release PR → 合并 → 自动打 tag / 构建 / 发布」，不在本地打 tag，也不用手填版本号：
 
 ```bash
-./scripts/release.sh 2026.12.0        # 或 major / minor / patch
+./scripts/release.sh                  # 不传版本；CI 按日历号推导
+./scripts/release.sh 2026.12.0        # 可选：显式覆盖
 ```
 
-1. CI 在 `release/v<ver>` 分支上用 `scripts/version.sh` 统一版本号（`Cargo.toml`、`Cargo.lock`、`README.md`、`SKILL.md` 的 `min_binary_version`），并开/更新 release PR。
-2. 合并该 PR 到 `master` 后，CI 自动创建 annotated tag `v<ver>`、构建 6 平台、发布 GitHub Release（含下载表格与自动生成的更新日志）。
-3. 手工推送 `v<ver>` tag 仍是恢复路径：跳过版本统一，直接构建并发布。
-4. 本地 `scripts/version.sh [patch|minor|major|x.y.z|check]` 仍可用于查看/校验版本。
+推到 `master` 的 `feat` / `fix` 也会自动走同一步，不必再执行上面的命令。
+
+1. CI 在固定分支 `release/next` 上用 `scripts/version.sh` 统一版本号（`Cargo.toml`、`Cargo.lock`、`README.md`、`SKILL.md` 的 `min_binary_version`），并开或更新**同一个** release PR。版本是日历号 `YYYY.M.P`：同一个 UTC 月份递增最后一位，跨月从 0 开始。
+2. 合并该 PR（标题保持 `chore(release): 版本统一到 <ver>`）后，CI 只创建 annotated tag `v<ver>`、构建 6 平台、发布 GitHub Release（含下载表格与自动生成的更新日志），不会再开下一档 release PR。
+3. 自上一个 tag 之后没有 `feat` / `fix`，或目标 tag 已存在时，这次运行成功退出。
+4. 手工推送 `v<ver>` tag 仍是恢复路径：跳过版本统一，直接构建并发布。
+5. 本地 `scripts/version.sh [patch|minor|major|x.y.z|check]` 仍可用于查看/校验版本。`major` / `minor` / `patch` 是传统位数递增，不是日历规则。
+
+仓库需要允许 GitHub Actions 创建 pull request（Settings → Actions → General → Allow GitHub Actions to create and approve pull requests）。准备 PR 的 job 只要求 `contents: write` 与 `pull-requests: write`。
 
 ---
 

@@ -1,16 +1,22 @@
 name: Release
 
-# 发版流程（参考 herbertgao-skills，适配 Rust/GitHub Releases）：
-# 1) workflow_dispatch(version)（或 `scripts/release.sh <ver>`）→ 开/更新 release PR，
-#    只做版本号统一（Cargo.toml / Cargo.lock / README / SKILL.md min_binary_version）。
-# 2) 合并该 PR 到 master → 自动打 annotated tag vN.N.N、建 draft Release、构建 6 平台并发布。
-# 3) 手动推送 vN.N.N tag 仍是恢复路径：跳过版本 bump，直接构建并发布。
+# 发版流程（决策对齐 pi-extensions 使用的 changesets/action，版本仍是本仓日历号）：
+# https://github.com/changesets/action/blob/a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d/src/index.ts
+# https://github.com/HerbertGao/pi-extensions/blob/master/.github/workflows/release.yml
+# https://github.com/HerbertGao/pi-extensions/blob/master/scripts/version-packages.mjs
+# 1) push master：自上一个 tag 之后有 feat/fix 时，按 UTC 日历推导下一版，
+#    在固定分支 release/next 上开或更新同一个 release PR。不需要手填版本。
+# 2) 合并标题为 chore(release): 版本统一到 N.N.N 的提交后，只打 annotated tag、
+#    建 draft Release、构建 6 平台并发布，不再开 PR。
+# 3) 没有可发布提交，或该版本 tag 已存在：成功退出。
+# 4) 手动推送 vN.N.N tag 仍是恢复路径：跳过版本统一，直接构建并发布。
+# 5) workflow_dispatch 的 version 可留空。留空时与 push 一样只准备 PR，不会因此发布。
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release (N.N.N, no leading v)"
-        required: true
+        description: "可选。留空则按日历版本自动推导；填写则为 N.N.N（不要前导 v）"
+        required: false
         type: string
   push:
     branches: [master]
@@ -18,9 +24,10 @@ on:
       - "v[0-9]*"
 
 concurrency:
-  # 隔离 prepare / publish；绝不取消半完成的发布。
-  group: release-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: false
+  # prepare 共用一组并取消旧运行，避免两个 push 各开一个 PR。
+  # release 提交和 tag 单独成组，且不取消，避免打断已经开始的发布。
+  group: "${{ github.ref_type == 'tag' && format('release-publish-tag-{0}', github.ref) || (github.event_name == 'workflow_dispatch' && format('release-prepare-{0}', github.ref)) || (contains(toJSON(github.event.head_commit.message), 'chore(release): 版本统一到') && format('release-publish-{0}', github.sha)) || format('release-prepare-{0}', github.ref) }}"
+  cancel-in-progress: "${{ (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_type == 'branch')) && !contains(toJSON(github.event.head_commit.message), 'chore(release): 版本统一到') }}"
 
 env:
   RUST_BACKTRACE: 1
@@ -31,11 +38,43 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) 手动触发：统一版本号并开/更新 release PR
+  # 1) 判断：prepare / publish / skip
+  # ---------------------------------------------------------------------------
+  plan:
+    name: 解析发布动作
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      branch: ${{ steps.plan.outputs.branch }}
+      reason: ${{ steps.plan.outputs.reason }}
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: 解析动作
+        id: plan
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_EXPLICIT_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '' }}
+          RELEASE_FETCH_TAGS: "1"
+        run: bash scripts/release_plan.sh --github-output "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # 2) 有可发布改动：统一版本号并开/更新同一个 release PR
+  #    最小权限：contents: write 用来推 release/next；
+  #    pull-requests: write 用来创建或更新 PR。
+  #    仓库还必须允许 Actions 创建 PR，否则 gh pr create 会被拒绝。
   # ---------------------------------------------------------------------------
   prepare-release:
     name: 准备 release PR
-    if: github.event_name == 'workflow_dispatch'
+    needs: plan
+    if: needs.plan.outputs.mode == 'prepare'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,210 +83,33 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
-          # 需要 token 推送 release 分支。
+          fetch-tags: true
+          # 需要 token 推送 release/next。
           persist-credentials: true
-
-      - name: 校验版本输入
-        id: ver
-        env:
-          RAW: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          ver="${RAW#v}"
-          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::invalid version '$RAW' (want N.N.N)"
-            exit 1
-          fi
-          {
-            echo "version=$ver"
-            echo "tag=v$ver"
-            echo "branch=release/v$ver"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: 拒绝已存在的 tag
-        env:
-          TAG: ${{ steps.ver.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null 2>&1 ||
-            git ls-remote --exit-code --tags origin \
-              "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "::error::tag $TAG already exists — pick a new version"
-            exit 1
-          fi
 
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: 统一版本号
-        env:
-          VER: ${{ steps.ver.outputs.version }}
-        run: |
-          set -euo pipefail
-          scripts/version.sh "$VER"
-          # Cargo.lock 里也记录了本 crate 的版本，cargo metadata 会刷新它（不编译）。
-          cargo metadata --format-version 1 > /dev/null
-
-      - name: 校验版本号已收敛
-        env:
-          VER: ${{ steps.ver.outputs.version }}
-        run: |
-          set -euo pipefail
-          cargo_ver=$(
-            sed -n '/^\[package\]/,/^\[/s/^version = "\(.*\)"/\1/p' \
-              Cargo.toml | head -1
-          )
-          [[ "$cargo_ver" == "$VER" ]] || {
-            echo "::error file=Cargo.toml::version '$cargo_ver' != '$VER'"
-            exit 1
-          }
-          skill_md=".agents/skills/x_likes/SKILL.md"
-          grep -q "^min_binary_version: $VER$" "$skill_md" || {
-            echo "::error file=$skill_md::min_binary_version != $VER"
-            exit 1
-          }
-          bash scripts/check-skills.sh
-
-      - name: 提交并推送 release 分支
-        env:
-          VER: ${{ steps.ver.outputs.version }}
-          BRANCH: ${{ steps.ver.outputs.branch }}
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email \
-            "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git checkout -B "$BRANCH"
-          git add Cargo.toml Cargo.lock README.md \
-            .agents/skills/x_likes/SKILL.md
-          if git diff --cached --quiet; then
-            echo "::error::nothing to bump (already $VER everywhere)."
-            echo "::error::If a prior release PR stalled,"
-            echo "::error::close it or pick a new version."
-            exit 1
-          fi
-          git commit -m "chore(release): 版本统一到 $VER"
-          git push -u origin "HEAD:refs/heads/$BRANCH" --force-with-lease
-
       - name: 开或更新 release PR
         env:
           GH_TOKEN: ${{ github.token }}
-          VER: ${{ steps.ver.outputs.version }}
-          TAG: ${{ steps.ver.outputs.tag }}
-          BRANCH: ${{ steps.ver.outputs.branch }}
-          BASE: ${{ github.event.repository.default_branch }}
-        run: |
-          set -euo pipefail
-          title="chore(release): 版本统一到 ${VER}"
-          body=$(cat <<MD
-          ## Release ${TAG}
-
-          本 PR 只统一版本号：\`Cargo.toml\` / \`Cargo.lock\` / \`README.md\` /
-          \`.agents/skills/x_likes/SKILL.md\` 的
-          \`min_binary_version\`，由 \`scripts/version.sh\` 完成。
-
-          **合并到 \`${BASE}\` 后会自动：**
-          1. 在该提交上创建 annotated tag \`${TAG}\`
-          2. 创建 draft Release，构建 6 平台并上传产物
-          3. 发布 Release，并写入下载表格
-
-          ### 维护者
-          - 发起：\`scripts/release.sh ${VER}\`
-          - 或：\`gh workflow run release.yml -f version=${VER}\`
-          - 检查本 PR 全绿后合并
-          - 不要在本地手动打 tag（tag 推送仅作为恢复路径）
-          MD
-          )
-          body=$(printf '%s\n' "$body" | sed 's/^[[:space:]]*//')
-
-          pr=$(
-            gh pr list --head "$BRANCH" --base "$BASE" \
-              --state open --json number -q '.[0].number // empty'
-          )
-          if [[ -n "$pr" ]]; then
-            echo "updating existing PR #$pr"
-            gh pr edit "$pr" --title "$title" --body "$body"
-            gh pr view "$pr" --json url -q .url
-          else
-            gh pr create --base "$BASE" --head "$BRANCH" \
-              --title "$title" --body "$body"
-          fi
-
-  # ---------------------------------------------------------------------------
-  # 2) push 触发：解析版本（release 提交或 tag），决定是否发版
-  # ---------------------------------------------------------------------------
-  resolve:
-    name: 解析版本
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    outputs:
-      should_release: ${{ steps.ver.outputs.should_release }}
-      version: ${{ steps.ver.outputs.version }}
-    steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-        with:
-          # 完整历史 + tags：用于识别 release 提交与检查 tag 是否已存在。
-          fetch-depth: 0
-
-      - name: 解析版本
-        id: ver
-        shell: bash
-        run: |
-          set -euo pipefail
-          should=false
-          ver=""
-
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            # 恢复路径：手动推送的版本 tag
-            ver="${GITHUB_REF_NAME#v}"
-            should=true
-          elif [[ "$GITHUB_REF" == refs/heads/master ]]; then
-            # 只有 release 提交才发版：squash/rebase 保留 PR 标题，
-            # merge commit 形如 "Merge pull request #N from .../release/vX.Y.Z"。
-            subject=$(git log -1 --pretty=%s)
-            ver=$(printf '%s\n' "$subject" |
-              sed -nE \
-                's/^chore\(release\): 版本统一到 ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
-            if [[ -z "$ver" ]]; then
-              ver=$(printf '%s\n' "$subject" |
-                sed -nE 's/.*\/release\/v([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
-            fi
-            if [[ -n "$ver" ]]; then
-              if git rev-parse -q --verify "refs/tags/v$ver" \
-                >/dev/null 2>&1; then
-                echo "::notice::tag v$ver already exists — skipping"
-                echo "::notice::use a tag push to rebuild"
-                ver=""
-              else
-                should=true
-              fi
-            else
-              echo "Not a release commit ($subject) — nothing to publish"
-            fi
-          fi
-
-          if [[ "$should" == "true" ]] &&
-            [[ ! "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::invalid version '$ver'"
-            exit 1
-          fi
-
-          {
-            echo "should_release=$should"
-            echo "version=$ver"
-          } >> "$GITHUB_OUTPUT"
+          RELEASE_ALLOW_PUSH: "1"
+          RELEASE_FETCH_TAGS: "1"
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+          RELEASE_EXPLICIT_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || '' }}
+          RELEASE_BASE: ${{ github.event.repository.default_branch }}
+        run: bash scripts/release_open_pr.sh
 
   # ---------------------------------------------------------------------------
   # 3) 质量门禁（仅真正发版时跑）
   # ---------------------------------------------------------------------------
   quality-checks:
     name: Quality Checks
-    needs: resolve
-    if: needs.resolve.outputs.should_release == 'true'
+    needs: plan
+    if: needs.plan.outputs.mode == 'publish'
     uses: ./.github/workflows/reusable-quality-checks.yml
 
   # ---------------------------------------------------------------------------
@@ -255,24 +117,25 @@ jobs:
   # ---------------------------------------------------------------------------
   create-release:
     name: 创建 tag 与 Release
-    needs: [resolve, quality-checks]
-    if: needs.resolve.outputs.should_release == 'true'
+    needs: [plan, quality-checks]
+    if: needs.plan.outputs.mode == 'publish'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
-      version: ${{ needs.resolve.outputs.version }}
+      version: ${{ needs.plan.outputs.version }}
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
           # 需要 token 推送 annotated tag。
           persist-credentials: true
 
       - name: 校验 tag 与代码版本一致
         env:
-          VER: ${{ needs.resolve.outputs.version }}
+          VER: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           cargo_ver=$(
@@ -291,7 +154,7 @@ jobs:
 
       - name: 创建 annotated tag
         env:
-          VER: ${{ needs.resolve.outputs.version }}
+          VER: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           if git rev-parse -q --verify "refs/tags/v$VER" >/dev/null 2>&1; then
@@ -308,7 +171,7 @@ jobs:
         id: rel
         env:
           GH_TOKEN: ${{ github.token }}
-          VER: ${{ needs.resolve.outputs.version }}
+          VER: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
           if gh release view "v$VER" >/dev/null 2>&1; then
@@ -321,8 +184,8 @@ jobs:
         if: steps.rel.outputs.exists != 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.resolve.outputs.version }}
-          name: x_likes_downloader v${{ needs.resolve.outputs.version }}
+          tag_name: v${{ needs.plan.outputs.version }}
+          name: x_likes_downloader v${{ needs.plan.outputs.version }}
           draft: true
           prerelease: false
           generate_release_notes: true
