@@ -8,7 +8,7 @@ use crate::config::Config;
 use crate::error::{classify_status, ErrorKind, ErrorPayload};
 use crate::x_api::XApi;
 
-use super::list_likes::{entry_to_summary, parse_likes_response};
+use super::list_likes::{entry_to_summary, find_outer_timeline, parse_likes_response};
 use super::types::{TweetSummary, UserBrief, UserTweetsOutput, UserTweetsRequest};
 
 /// 一页 GraphQL 取数结果 `(http_status, body)`（便于单测注入，不绑死网络）。
@@ -73,17 +73,19 @@ pub fn parse_user_by_screen_name(resp: &Value) -> Option<UserBrief> {
     })
 }
 
-/// 非鉴权类顶层 GraphQL 操作错误：仅当 `data` 缺失或为 null 时视为失败。
+/// 非鉴权类顶层 GraphQL 操作错误：仅当**该操作所需的数据**不可用时视为失败。
 ///
-/// X 有时会同时返回可用 `data` 与非致命 `errors`（告警）；此时保留可用内容（容忍降级），
-/// 只有「没有可用数据」才判为失败。缺失用户的合法空响应是 `{"data":{}}`（无 errors），
-/// 不会命中本函数，仍由 `parse_user_by_screen_name` → `tweet_unavailable` 处理。
-fn operation_error(resp: &Value) -> Option<ErrorPayload> {
+/// `data_usable` 由调用方按操作给出（lookup 看 `user.result`，timeline 看 timeline 节点），
+/// 不能只看 `data` 是否为 null：`{"data":{},"errors":[...]}` 与
+/// `{"data":{"user":null},"errors":[...]}` 都是「有 errors 但没有可用数据」。
+/// X 有时会同时返回可用 `data` 与非致命 `errors`（告警）；此时保留可用内容（容忍降级）。
+/// 缺失用户的合法空响应是 `{"data":{}}`（**无 errors**），不命中本函数，
+/// 仍由 `parse_user_by_screen_name` → `tweet_unavailable` 处理。
+fn operation_error(resp: &Value, data_usable: bool) -> Option<ErrorPayload> {
     let errors = resp.get("errors")?.as_array()?;
     if errors.is_empty() {
         return None;
     }
-    let data_usable = resp.get("data").map(|d| !d.is_null()).unwrap_or(false);
     if data_usable {
         return None;
     }
@@ -101,7 +103,12 @@ fn operation_error(resp: &Value) -> Option<ErrorPayload> {
 /// 统一的响应判定：HTTP 状态 → 鉴权类 errors → 非 JSON body → 非鉴权操作错误。
 ///
 /// 顺序很重要：鉴权错误必须先于「操作错误」判定（两者都走 HTTP 200 + errors）。
-fn ensure_response_ok(status: u16, resp: &Value, operation: &str) -> Result<(), ErrorPayload> {
+fn ensure_response_ok(
+    status: u16,
+    resp: &Value,
+    operation: &str,
+    data_usable: bool,
+) -> Result<(), ErrorPayload> {
     if let Some(payload) = classify_http_error(status) {
         return Err(payload);
     }
@@ -119,7 +126,7 @@ fn ensure_response_ok(status: u16, resp: &Value, operation: &str) -> Result<(), 
             format!("{operation} 返回非 JSON 响应（可能被网络中间层拦截），可重试"),
         ));
     }
-    if let Some(payload) = operation_error(resp) {
+    if let Some(payload) = operation_error(resp, data_usable) {
         return Err(payload);
     }
     Ok(())
@@ -127,8 +134,9 @@ fn ensure_response_ok(status: u16, resp: &Value, operation: &str) -> Result<(), 
 
 /// 解析 UserByScreenName 响应：先统一判定，再把「无 errors 的缺用户」映射为 `tweet_unavailable`。
 fn parse_lookup(status: u16, resp: &Value, username: &str) -> Result<UserBrief, ErrorPayload> {
-    ensure_response_ok(status, resp, "UserByScreenName")?;
-    parse_user_by_screen_name(resp).ok_or_else(|| {
+    let user = parse_user_by_screen_name(resp);
+    ensure_response_ok(status, resp, "UserByScreenName", user.is_some())?;
+    user.ok_or_else(|| {
         ErrorPayload::new(
             ErrorKind::TweetUnavailable,
             format!("用户不存在、已注销、被封禁或不可见: {}", username),
@@ -141,7 +149,10 @@ fn parse_timeline_page(
     status: u16,
     resp: &Value,
 ) -> Result<(Vec<Value>, Option<String>), ErrorPayload> {
-    ensure_response_ok(status, resp, "UserTweets")?;
+    // 该页「可用」的判据是 timeline 节点存在，而不是 data 非 null：
+    // 最后一页合法地可能没有任何 tweet entry，但 timeline 节点仍在。
+    let data_usable = find_outer_timeline(resp).is_some();
+    ensure_response_ok(status, resp, "UserTweets", data_usable)?;
     Ok(parse_likes_response(resp))
 }
 
@@ -426,7 +437,7 @@ mod tests {
     #[test]
     fn operation_error_is_retryable_when_data_missing() {
         let resp = json!({"errors": [{"message": "Internal server error"}], "data": null});
-        let err = operation_error(&resp).expect("must be classified as operation error");
+        let err = operation_error(&resp, false).expect("must be classified as operation error");
         assert_eq!(err.kind, ErrorKind::NetworkError);
     }
 
@@ -434,14 +445,60 @@ mod tests {
     fn operation_error_tolerated_when_data_present() {
         // 告警型 errors + 可用 data：保留可用内容（容忍降级）
         let resp = json!({"data": {"user": {"result": {"rest_id": "900000001"}}}, "errors": [{"message": "partial"}]});
-        assert!(operation_error(&resp).is_none());
+        assert!(operation_error(&resp, true).is_none());
     }
 
     #[test]
     fn operation_error_ignores_error_free_and_empty_errors() {
-        assert!(operation_error(&json!({"data": {}})).is_none());
-        assert!(operation_error(&json!({"errors": [], "data": null})).is_none());
-        assert!(operation_error(&json!({"data": null})).is_none());
+        assert!(operation_error(&json!({"data": {}}), false).is_none());
+        assert!(operation_error(&json!({"errors": [], "data": null}), false).is_none());
+        assert!(operation_error(&json!({"data": null}), false).is_none());
+    }
+
+    #[test]
+    fn operation_error_flags_empty_data_with_errors() {
+        // `data` 非 null 但没有任何可用内容——不能只看 data 是否为 null
+        for resp in [
+            json!({"data": {}, "errors": [{"message": "Internal server error"}]}),
+            json!({"data": {"user": null}, "errors": [{"message": "Internal server error"}]}),
+        ] {
+            let err = operation_error(&resp, false)
+                .unwrap_or_else(|| panic!("must flag empty data with errors: {resp}"));
+            assert_eq!(err.kind, ErrorKind::NetworkError);
+        }
+    }
+
+    #[test]
+    fn lookup_empty_data_with_errors_is_retryable_not_unavailable() {
+        for resp in [
+            json!({"data": {}, "errors": [{"message": "Internal server error"}]}),
+            json!({"data": {"user": null}, "errors": [{"message": "Internal server error"}]}),
+        ] {
+            let err = parse_lookup(200u16, &resp, "fixture_user_a").unwrap_err();
+            assert_eq!(
+                err.kind,
+                ErrorKind::NetworkError,
+                "有 errors 但无 user 数据时必须可重试，不能是 tweet_unavailable: {resp}"
+            );
+        }
+    }
+
+    #[test]
+    fn timeline_empty_data_with_errors_is_err_not_empty_page() {
+        let resp = json!({"data": {}, "errors": [{"message": "Internal server error"}]});
+        let err = parse_timeline_page(200u16, &resp).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NetworkError);
+    }
+
+    #[test]
+    fn timeline_usable_data_with_warnings_is_tolerated() {
+        // 有 timeline 节点 + 非致命 errors：保留可用内容
+        let resp = page(vec![tweet_entry("1700000000000031002")], None);
+        let mut resp = resp;
+        resp["errors"] = json!([{"message": "partial"}]);
+        let (entries, cursor) = parse_timeline_page(200u16, &resp).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert!(cursor.is_none());
     }
 
     #[test]
@@ -559,6 +616,35 @@ mod tests {
                 tweets.len()
             ),
         }
+    }
+
+    #[tokio::test]
+    async fn collect_pages_empty_data_with_errors_after_one_page_is_err() {
+        // 与 `data: null` 同类的边界：`{"data":{},"errors":[...]}` 也不能被当成「空页正常结束」。
+        let mut pages = VecDeque::from(vec![
+            Ok((
+                200u16,
+                page(vec![tweet_entry("1700000000000031002")], Some("C1")),
+            )),
+            Ok((
+                200u16,
+                json!({"data": {}, "errors": [{"message": "Internal server error"}]}),
+            )),
+        ]);
+        let result = collect_pages(
+            move |_| {
+                let p = pages.pop_front().expect("two pages");
+                Box::pin(async move { p }) as PageFuture
+            },
+            true,
+            None,
+            false,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ref e) if e.kind == ErrorKind::NetworkError),
+            "page-2 empty-data-with-errors must fail the whole request, got {result:?}"
+        );
     }
 
     #[tokio::test]

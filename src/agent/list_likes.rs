@@ -184,7 +184,7 @@ async fn fetch_one_page(
 /// X 历史上把它叫 `timeline_v2`（V2 timeline 是 opt-in feature），
 /// 在 V2 timeline 全量普及后字段改名为 `timeline`。两种字段名都要兼容：
 /// 优先 `timeline_v2`（保留对老响应的解析能力），回退 `timeline`（当前默认）。
-fn find_outer_timeline(data: &Value) -> Option<&Value> {
+pub(crate) fn find_outer_timeline(data: &Value) -> Option<&Value> {
     let result = data
         .get("data")
         .and_then(|d| d.get("user"))
