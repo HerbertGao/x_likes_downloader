@@ -6,10 +6,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use x_likes_downloader::agent::types::{
     AuthStatus, DownloadOpts, FetchTweetRequest, ListOpts, MediaItem, NullSink, ProgressEvent,
-    ProgressSink,
+    ProgressSink, UserTweetsRequest,
 };
 use x_likes_downloader::agent::{
-    auth_status, download_media, fetch_tweet, list_likes, run_serve_mcp,
+    auth_status, download_media, fetch_tweet, list_likes, run_serve_mcp, user_tweets,
 };
 use x_likes_downloader::config::{self, Config};
 use x_likes_downloader::envelope::{Meta, OutputEnvelope};
@@ -59,6 +59,11 @@ enum Commands {
     Tweet {
         #[command(subcommand)]
         action: TweetAction,
+    },
+    /// 按 username 列出指定账号的推文（Agent 友好的 JSON 输出）
+    User {
+        #[command(subcommand)]
+        action: UserAction,
     },
     /// 启动 MCP server（v2 Agent 接口，stdio transport）
     Serve {
@@ -122,6 +127,31 @@ enum TweetAction {
         /// 纯数字 tweet_id（与 `--url` 二选一）
         #[arg(long)]
         id: Option<String>,
+        /// 显式声明 JSON 输出（保留供未来扩展，新子命令默认即 JSON）
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum UserAction {
+    /// 列出指定账号的推文，输出 JSON 信封到 stdout
+    Tweets {
+        /// 目标账号 username（screen_name，允许前导 @）
+        #[arg(long)]
+        username: String,
+        /// 拉取全部可见推文（按游标翻页）
+        #[arg(long)]
+        all: bool,
+        /// 从指定游标继续拉取
+        #[arg(long)]
+        since_cursor: Option<String>,
+        /// 单页条数请求值（X 端忽略过小的 count，实际每页约 20 条，分页以 cursor 为准）
+        #[arg(long)]
+        count: Option<u32>,
+        /// 同时携带原始 GraphQL entry（大幅增加输出体积，仅用于调试）
+        #[arg(long)]
+        include_raw: bool,
         /// 显式声明 JSON 输出（保留供未来扩展，新子命令默认即 JSON）
         #[arg(long)]
         json: bool,
@@ -195,6 +225,16 @@ async fn main() -> Result<()> {
         },
         Commands::Tweet { action } => match action {
             TweetAction::Get { url, id, json: _ } => run_tweet_get(url, id).await,
+        },
+        Commands::User { action } => match action {
+            UserAction::Tweets {
+                username,
+                all,
+                since_cursor,
+                count,
+                include_raw,
+                json: _,
+            } => run_user_tweets(username, all, since_cursor, count, include_raw).await,
         },
         Commands::Serve { mcp } => {
             if !mcp {
@@ -278,6 +318,38 @@ async fn run_tweet_get(url: Option<String>, id: Option<String>) -> i32 {
         Err(payload) => {
             if payload.kind == ErrorKind::InvalidArgument {
                 eprintln!("用法: x_likes_downloader tweet get --url <url> | --id <id>");
+            }
+            OutputEnvelope::failure(payload).emit()
+        }
+    }
+}
+
+async fn run_user_tweets(
+    username: String,
+    all: bool,
+    since_cursor: Option<String>,
+    count: Option<u32>,
+    include_raw: bool,
+) -> i32 {
+    let req = UserTweetsRequest {
+        username,
+        all,
+        since_cursor,
+        count,
+        include_raw,
+    };
+
+    match user_tweets(req).await {
+        Ok(out) => {
+            let cursor = out.cursor.clone();
+            let data = serde_json::to_value(&out).unwrap_or(serde_json::Value::Null);
+            let mut env = OutputEnvelope::success(data);
+            env.meta.cursor = cursor;
+            env.emit()
+        }
+        Err(payload) => {
+            if payload.kind == ErrorKind::InvalidArgument {
+                eprintln!("用法: x_likes_downloader user tweets --username <name>");
             }
             OutputEnvelope::failure(payload).emit()
         }

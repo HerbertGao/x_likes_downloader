@@ -1,11 +1,12 @@
 //! MCP server (v2 Agent 接口).
 //!
-//! 用 [`rmcp`](https://docs.rs/rmcp) 把 5 个 lib 函数包成 MCP 工具：
+//! 用 [`rmcp`](https://docs.rs/rmcp) 把 6 个 lib 函数包成 MCP 工具：
 //! - `list_likes`      ← `agent::list_likes`
 //! - `download_media`  ← `agent::download_media`
 //! - `auth_status`     ← `agent::auth_status`
 //! - `setup_from_curl` ← `agent::import_curl`
 //! - `fetch_tweet`     ← `agent::fetch_tweet`
+//! - `user_tweets`     ← `agent::user_tweets`
 //!
 //! Transport：仅 stdio。HTTP / SSE 不支持（凭据本地化原则）。
 //!
@@ -33,8 +34,9 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{
     DownloadOpts, FetchTweetRequest, ListOpts, MediaItem, NullSink, ProgressEvent, ProgressSink,
+    UserTweetsRequest,
 };
-use super::{auth_status, download_media, fetch_tweet, import_curl, list_likes};
+use super::{auth_status, download_media, fetch_tweet, import_curl, list_likes, user_tweets};
 use crate::error::ErrorPayload;
 
 // ============================================================================
@@ -254,6 +256,21 @@ impl XldMcpServer {
         Parameters(req): Parameters<FetchTweetRequest>,
     ) -> Result<CallToolResult, McpError> {
         match fetch_tweet(req).await {
+            Ok(out) => Ok(success_call_result(&out)),
+            Err(payload) => Ok(error_call_result(&payload)),
+        }
+    }
+
+    /// 按 username 列出指定账号的推文（不限于本账号）。
+    #[tool(
+        name = "user_tweets",
+        description = "按 username（screen_name，允许前导 @）拉取指定 X 账号的推文列表，返回 UserTweetsOutput { user{screen_name,rest_id,name?}, tweets[], cursor, schema_version }，tweets[] 元素与 list_likes 同构（id / author_handle / text / media[] / created_at / tweet_url 等），可直接把 media[] 交给 download_media。`all=true` 按游标翻全部可见推文、`since_cursor` 增量续拉、`count` 为请求的单页条数（X 端实际每页固定约 20 条，按 cursor 分页）；仅含顶层推文，不含置顶推文（TimelinePinEntry）与会话折叠线程。典型错误 kind：invalid_argument（username 非法）、tweet_unavailable（用户不存在/注销/被封，不应重试）、auth_expired、endpoint_stale、rate_limited、network_error。"
+    )]
+    async fn user_tweets(
+        &self,
+        Parameters(req): Parameters<UserTweetsRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        match user_tweets(req).await {
             Ok(out) => Ok(success_call_result(&out)),
             Err(payload) => Ok(error_call_result(&payload)),
         }

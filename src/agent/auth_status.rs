@@ -180,6 +180,12 @@ mod tests {
             tweet_detail_api_url: "https://x.com/TweetDetail".into(),
             tweet_features: "{}".into(),
             tweet_fieldtoggles: "{}".into(),
+            user_by_screen_name_api_url: "https://x.com/UserByScreenName".into(),
+            user_by_screen_name_features: "{}".into(),
+            user_by_screen_name_fieldtoggles: "{}".into(),
+            user_tweets_api_url: "https://x.com/UserTweets".into(),
+            user_tweets_features: "{}".into(),
+            user_tweets_fieldtoggles: "{}".into(),
             mock_mode: false,
             mock_liked_tweets_file: "".into(),
         }
