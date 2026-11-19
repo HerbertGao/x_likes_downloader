@@ -989,6 +989,10 @@ fn decide_coverage(
 }
 
 fn tweet_still_complete(paths: &RecordPaths, tweet: &TweetFact) -> bool {
+    // 批次落盘时不是 complete 候选的推文，不能被之后更小的清单观察“补成”可提交。
+    if !(tweet.eligible && tweet.original_coverage == OriginalCoverage::Complete) {
+        return false;
+    }
     let Some(manifest) = load_manifest(paths, &tweet.tweet_id) else {
         return false;
     };
@@ -2027,6 +2031,36 @@ mod tests {
         let batch_id = captured.record_confirmation.batch_id.unwrap();
         observe_all(dir.path(), &[item("1001", "a.jpg"), item("1001", "b.jpg")]);
         assert!(commit_download_record(&paths, &batch_id, &["1001".to_string()]).is_err());
+        assert!(!paths.record_path.exists());
+    }
+
+    #[test]
+    fn later_observation_cannot_promote_a_non_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let captured = capture(
+            dir.path(),
+            &[item("1001", "a.jpg")],
+            vec![result_ok(dir.path(), "1001", "a.jpg")],
+        );
+        assert!(captured.record_confirmation.candidates.is_empty());
+        let batch_id = captured.record_confirmation.batch_id.unwrap();
+        observe_all(dir.path(), &[item("1001", "a.jpg")]);
+        let listed = query_download_record_batches(&paths, Some(&batch_id)).unwrap();
+        let batch = listed.batch.expect("batch");
+        assert!(batch.candidates.is_empty());
+        assert!(commit_download_record(&paths, &batch_id, &["1001".to_string()]).is_err());
+
+        let full = [item("2001", "a.jpg"), item("2001", "b.jpg")];
+        observe_all(dir.path(), &full);
+        let partial = capture(
+            dir.path(),
+            &[item("2001", "a.jpg")],
+            vec![result_ok(dir.path(), "2001", "a.jpg")],
+        );
+        let partial_id = partial.record_confirmation.batch_id.unwrap();
+        observe_all(dir.path(), &[item("2001", "a.jpg")]);
+        assert!(commit_download_record(&paths, &partial_id, &["2001".to_string()]).is_err());
         assert!(!paths.record_path.exists());
     }
 }
