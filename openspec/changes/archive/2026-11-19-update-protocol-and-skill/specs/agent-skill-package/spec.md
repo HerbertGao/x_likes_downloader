@@ -28,7 +28,7 @@
 #### 场景:user_tweets 含下载衔接约定
 
 - **当** 解析 SKILL.md 中 `user_tweets` 工具说明
-- **那么** 必须存在一句明确约定：把 `user_tweets` 返回的 `tweets[].media[]` 传给 `download_media` 的 `items[]` 来下载，并声明单页条数与折叠线程两条已知边界
+- **那么** 必须存在一句明确约定：把 `user_tweets` 返回的 `tweets[].media[]` 传给 `download_media` 的 `items[]` 来下载，并声明单页条数、置顶推文、会话折叠线程三条已知边界
 
 #### 场景:明示不暴露的工具
 

@@ -20,7 +20,7 @@
 
 - [x] 3.1 SKILL.md frontmatter：`description` 中 `(5 tools)` → `(6 tools)`；`min_binary_version` 保持与 `Cargo.toml` 同步的机制不变（发布时经 `scripts/version.sh` 统一抬升，见 agent-skill-package「Skill 与 binary 版本绑定」需求）
   - 文件：`.agents/skills/x_likes/SKILL.md`
-- [x] 3.2 SKILL.md 工具表：新增 `user_tweets(username, all?, since_cursor?, count?, include_raw?)` 条目，含「`tweets[].media[]` 传给 `download_media`」衔接约定与两条已知边界（X 端单页约 20 条、不含会话折叠线程）——对齐本变更 specs/agent-skill-package delta 的场景「user_tweets 含下载衔接约定」
+- [x] 3.2 SKILL.md 工具表：新增 `user_tweets(username, all?, since_cursor?, count?, include_raw?)` 条目，含「`tweets[].media[]` 传给 `download_media`」衔接约定与三条已知边界（X 端单页约 20 条、不含置顶推文、不含会话折叠线程）——对齐本变更 specs/agent-skill-package delta 的场景「user_tweets 含下载衔接约定」
   - 文件：`.agents/skills/x_likes/SKILL.md`
 - [x] 3.3 SKILL.md 调用约定：MCP 工具清单与 CLI 形态清单各追加 `user_tweets` / `user tweets --json`；形态对照表补一行；`tweet_unavailable` 恢复指引改为同时覆盖 `fetch_tweet`（推文级）与 `user_tweets`（账号级）
   - 文件：`.agents/skills/x_likes/SKILL.md`

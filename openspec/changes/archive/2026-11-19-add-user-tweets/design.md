@@ -33,4 +33,4 @@
 
 无迁移：新增子命令与工具对既有调用方零影响；未导入新凭据字段的旧部署走 defaults.json / 硬编码兜底即可用。回滚即还原 git diff 涉及文件。
 
-归档提示：sync/archive 时需把主 spec `openspec/specs/agent-mcp-server/spec.md` 的需求标题「tools/list 暴露 5 个工具」重命名为 6（delta 按仓库惯例以旧标题作 MODIFIED 锚点，同 add-fetch-tweet 归档先例 05e4b7e 的 4→5 处理）。
+归档记录：主 spec `openspec/specs/agent-mcp-server/spec.md` 的需求标题已随本次归档从「tools/list 暴露 5 个工具」重命名为 6（delta 以旧标题作 MODIFIED 锚点，同 add-fetch-tweet 归档先例 05e4b7e 的 4→5 处理）。

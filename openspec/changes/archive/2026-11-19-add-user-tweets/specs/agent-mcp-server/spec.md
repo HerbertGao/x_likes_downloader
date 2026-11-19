@@ -1,6 +1,6 @@
 ## 修改需求
 
-### 需求:tools/list 暴露 5 个工具
+### 需求:tools/list 暴露 6 个工具
 
 `xld serve --mcp` 必须在响应 MCP `tools/list` 请求时返回且仅返回以下 6 个工具（本次变更由 5 个扩为 6 个，新增 `user_tweets`），每个工具必须包含名称、中文描述、JSON Schema 形式的输入参数：
 

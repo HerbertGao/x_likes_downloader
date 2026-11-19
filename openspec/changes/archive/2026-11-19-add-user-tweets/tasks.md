@@ -24,7 +24,7 @@
   - 文件：`src/agent/types.rs`
 - [x] 3.2 核验 `user_tweets` 能力：username 归一化、UserByScreenName 用户解析（含 `{"data":{}}` / `UserUnavailable` / 旧 schema 回退三类不可见）、UserTweets 翻页语义（与 `list_likes` 一致：单页 / all 翻页 / since_cursor / 游标重复即停）、复用 `parse_likes_response` + `entry_to_summary`、`count` 透传附 `shortcut:` 已知边界注释、置顶推文（`TimelinePinEntry`）排除——已入工作区
   - 文件：`src/agent/user_tweets.rs`
-- [x] 3.3 核验纯函数单测 9 个（fixtures 为手工骨架，仅保留解析器读取的键：ubsn_ok / ubsn_notfound / usertweets_ok）——已入工作区
+- [x] 3.3 核验单测 30 个（含纯函数分类与翻页；fixtures 为手工骨架，仅保留解析器读取的键：ubsn_ok / ubsn_notfound / usertweets_ok）——已入工作区
   - 文件：`tests/fixtures/user_tweets/`
 
 ## 4. CLI / MCP 层（`src/main.rs`、`src/agent/mcp_server.rs`、`src/lib.rs`、`tests/mcp_smoke.rs`）
@@ -38,7 +38,7 @@
 
 ## 5. 验证（手动 + 自动）
 
-- [x] 5.1 `cargo test` 全绿（lib 168 + 集成套件）
+- [x] 5.1 `cargo test` 全绿（lib 189 + 集成套件）
 - [x] 5.2 真实凭据实测三条路径并在本文件记录结果：正常页（`xld user tweets --username <公开账号> --count 3`，exit 0、`data.user` 与 `meta.cursor` 就位）；游标续拉（`--since-cursor <上次 cursor>`，exit 0、条目不重叠）；用户不存在（不存在账号名，exit 1、`kind: "tweet_unavailable"`）
   - 已入工作区的实测记录：elonmusk 正常页 20 条 + cursor；`--since-cursor` 续拉 exit 0；`zzqq9988xxyy77w` 返回 `tweet_unavailable`——apply 时已复跑确认（正常页 20 条 + cursor、续拉首条与首页无重叠、不存在账号 exit 1 kind=tweet_unavailable）
 - [x] 5.3 与 `update-protocol-and-skill` 同批发布：SKILL.md 版本底线与发布版本一致（该变更 tasks 4.3 互为镜像）
