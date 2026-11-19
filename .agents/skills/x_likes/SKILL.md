@@ -354,7 +354,7 @@ x_likes_downloader user tweets --json --username alice --since-cursor "<cursor>"
 }
 ```
 
-`tweets[]` 元素与 `list_likes` 输出**完全同构**（同一 `TweetSummary` 结构）。已知边界：单页条数由 X 端控制（约 20 条，`count` 按请求透传）；仅含顶层推文，不含置顶推文（`TimelinePinEntry`）与会话折叠线程；转推（RT）条目的 `media[]` 恒为空——内层被转推文的媒体不展开（与 `likes list` 同构），需要其媒体时先从条目 `text` 中的原推链接解析原推 id 再 `fetch_tweet`；无效或过期的 `cursor` 会被 X 静默忽略并返回首页（与 `likes list` 一致）。
+`tweets[]` 元素与 `list_likes` 输出**完全同构**（同一 `TweetSummary` 结构）。已知边界：单页条数由 X 端控制（约 20 条，`count` 按请求透传）；仅含顶层推文，不含置顶推文（`TimelinePinEntry`）与会话折叠线程；转推（RT）条目的 `media[]` 恒为空——内层被转推文的媒体不展开（与 `likes list` 同构）。需要其媒体时按以下顺序取原推 id 再调 `fetch_tweet`：① 条目 `text` 里带原推链接（`https://x.com/<handle>/status/<id>`）→ 直接取该 id；② 不带链接 → 用 `include_raw=true` 重取本页，从 `raw_entries[].content.itemContent.tweet_results.result.legacy.retweeted_status_result.result.rest_id` 读原推 id；③ 以上都拿不到（如原推已删）→ 让用户提供原推 URL。不要假设能从无链接的文本里推导出 id；无效或过期的 `cursor` 会被 X 静默忽略并返回首页（与 `likes list` 一致）。
 
 **典型错误 `kind`**：`invalid_argument`（username 非法）/ `auth_expired` / `endpoint_stale` / `tweet_unavailable`（用户不存在 / 已注销 / 被封禁，不应重试）/ `rate_limited`（`--all` 大量翻页时）/ `network_error`
 

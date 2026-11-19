@@ -1,3 +1,7 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
 use serde_json::Value;
 
 use crate::config::Config;
@@ -5,7 +9,11 @@ use crate::error::{classify_status, ErrorKind, ErrorPayload};
 use crate::x_api::XApi;
 
 use super::list_likes::{entry_to_summary, parse_likes_response};
-use super::types::{UserBrief, UserTweetsOutput, UserTweetsRequest};
+use super::types::{TweetSummary, UserBrief, UserTweetsOutput, UserTweetsRequest};
+
+/// 一页 GraphQL 取数结果 `(http_status, body)`（便于单测注入，不绑死网络）。
+type PageResult = Result<(u16, Value), ErrorPayload>;
+type PageFuture = Pin<Box<dyn Future<Output = PageResult> + Send>>;
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -65,6 +73,128 @@ pub fn parse_user_by_screen_name(resp: &Value) -> Option<UserBrief> {
     })
 }
 
+/// 非鉴权类顶层 GraphQL 操作错误：仅当 `data` 缺失或为 null 时视为失败。
+///
+/// X 有时会同时返回可用 `data` 与非致命 `errors`（告警）；此时保留可用内容（容忍降级），
+/// 只有「没有可用数据」才判为失败。缺失用户的合法空响应是 `{"data":{}}`（无 errors），
+/// 不会命中本函数，仍由 `parse_user_by_screen_name` → `tweet_unavailable` 处理。
+fn operation_error(resp: &Value) -> Option<ErrorPayload> {
+    let errors = resp.get("errors")?.as_array()?;
+    if errors.is_empty() {
+        return None;
+    }
+    let data_usable = resp.get("data").map(|d| !d.is_null()).unwrap_or(false);
+    if data_usable {
+        return None;
+    }
+    let message = errors
+        .first()
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
+        .unwrap_or("unknown");
+    Some(ErrorPayload::new(
+        ErrorKind::NetworkError,
+        format!("GraphQL 操作失败（{message}），可重试"),
+    ))
+}
+
+/// 统一的响应判定：HTTP 状态 → 鉴权类 errors → 非 JSON body → 非鉴权操作错误。
+///
+/// 顺序很重要：鉴权错误必须先于「操作错误」判定（两者都走 HTTP 200 + errors）。
+fn ensure_response_ok(status: u16, resp: &Value, operation: &str) -> Result<(), ErrorPayload> {
+    if let Some(payload) = classify_http_error(status) {
+        return Err(payload);
+    }
+    if has_auth_error(resp) {
+        return Err(ErrorPayload::new(
+            ErrorKind::AuthExpired,
+            format!("{operation} 返回 HTTP 200 但含鉴权类 errors"),
+        ));
+    }
+    // graphql_get 把非 JSON body 解析为 Null（如 Cloudflare / 同意页）。这不是「用户不存在」，
+    // 不能给出「不要重试」的错误指引。
+    if resp.is_null() {
+        return Err(ErrorPayload::new(
+            ErrorKind::NetworkError,
+            format!("{operation} 返回非 JSON 响应（可能被网络中间层拦截），可重试"),
+        ));
+    }
+    if let Some(payload) = operation_error(resp) {
+        return Err(payload);
+    }
+    Ok(())
+}
+
+/// 解析 UserByScreenName 响应：先统一判定，再把「无 errors 的缺用户」映射为 `tweet_unavailable`。
+fn parse_lookup(status: u16, resp: &Value, username: &str) -> Result<UserBrief, ErrorPayload> {
+    ensure_response_ok(status, resp, "UserByScreenName")?;
+    parse_user_by_screen_name(resp).ok_or_else(|| {
+        ErrorPayload::new(
+            ErrorKind::TweetUnavailable,
+            format!("用户不存在、已注销、被封禁或不可见: {}", username),
+        )
+    })
+}
+
+/// 解析一页 UserTweets 响应：任何页面级错误都必须 `Err`，不得让调用方把前几页当成完整结果。
+fn parse_timeline_page(
+    status: u16,
+    resp: &Value,
+) -> Result<(Vec<Value>, Option<String>), ErrorPayload> {
+    ensure_response_ok(status, resp, "UserTweets")?;
+    Ok(parse_likes_response(resp))
+}
+
+/// 按游标翻页聚合。取数函数注入，便于离线覆盖「第 2 页失败不得返回部分结果」。
+///
+/// 语义同 `list_likes`：`all=false` 单页；`all=true` 翻到无游标或游标重复为止；
+/// `since_cursor` 为起点。任一页 `Err` 立即向上传播（丢弃已聚合页，不返回部分成功）。
+async fn collect_pages<F>(
+    mut fetch: F,
+    all: bool,
+    since_cursor: Option<String>,
+    include_raw: bool,
+) -> Result<(Vec<TweetSummary>, Vec<Value>, Option<String>), ErrorPayload>
+where
+    F: FnMut(Option<String>) -> PageFuture,
+{
+    let mut summaries = Vec::new();
+    let mut raw_entries: Vec<Value> = Vec::new();
+    let mut cursor = since_cursor;
+
+    loop {
+        let (status, resp) = fetch(cursor.clone()).await?;
+        let (entries, new_cursor) = parse_timeline_page(status, &resp)?;
+
+        for entry in entries {
+            if let Some(summary) = entry_to_summary(&entry, include_raw) {
+                summaries.push(summary);
+                if include_raw {
+                    raw_entries.push(entry);
+                }
+            }
+        }
+
+        if !all {
+            cursor = new_cursor;
+            break;
+        }
+        match new_cursor {
+            None => {
+                cursor = None;
+                break;
+            }
+            Some(ref c) if Some(c) == cursor.as_ref() => {
+                cursor = new_cursor;
+                break;
+            }
+            _ => cursor = new_cursor,
+        }
+    }
+
+    Ok((summaries, raw_entries, cursor))
+}
+
 /// HTTP 200 + `errors[].code ∈ {32,64,89}` → 凭据失效（与 fetch_tweet 同依据）。
 fn has_auth_error(resp: &Value) -> bool {
     resp.get("errors")
@@ -115,103 +245,51 @@ pub async fn user_tweets(req: UserTweetsRequest) -> Result<UserTweetsOutput, Err
         .count
         .unwrap_or_else(|| config.count.parse::<u32>().unwrap_or(20));
 
-    let api = XApi::new(config)
-        .map_err(|e| ErrorPayload::new(ErrorKind::InternalError, e.to_string()))?;
+    let api = Arc::new(
+        XApi::new(config)
+            .map_err(|e| ErrorPayload::new(ErrorKind::InternalError, e.to_string()))?,
+    );
 
-    // 1) username → 用户摘要
+    // 1) username → 用户摘要（含非鉴权操作错误判定，避免误报「用户不存在」）
     let (status, resp) = api.get_user_by_screen_name(&username).await?;
-    if let Some(payload) = classify_http_error(status) {
-        return Err(payload);
-    }
-    if has_auth_error(&resp) {
-        return Err(ErrorPayload::new(
-            ErrorKind::AuthExpired,
-            "UserByScreenName 返回 HTTP 200 但含鉴权类 errors",
-        ));
-    }
-    // graphql_get 把非 JSON body 解析为 Null（如 Cloudflare / 同意页）。这不是「用户不存在」，
-    // 不能给出「不要重试」的错误指引。
-    if resp.is_null() {
-        return Err(ErrorPayload::new(
-            ErrorKind::NetworkError,
-            "UserByScreenName 返回非 JSON 响应（可能被网络中间层拦截），可重试",
-        ));
-    }
-    let user = parse_user_by_screen_name(&resp).ok_or_else(|| {
-        ErrorPayload::new(
-            ErrorKind::TweetUnavailable,
-            format!("用户不存在、已注销、被封禁或不可见: {}", username),
-        )
-    })?;
+    let user = parse_lookup(status, &resp, &username)?;
 
     // 2) rest_id → 推文列表（翻页语义同 list_likes）
     // shortcut: X 的 UserTweets 忽略过小的 count，每页固定返回约 20 条；count 仍按请求透传，真正分页靠 cursor。
-    let mut all_summaries = Vec::new();
-    let mut all_raw: Vec<Value> = Vec::new();
-    let mut cursor = req.since_cursor.clone();
-
-    loop {
-        let (status, resp) = api
-            .get_user_tweets(&user.rest_id, count as i64, cursor.as_deref())
-            .await?;
-        if let Some(payload) = classify_http_error(status) {
-            return Err(payload);
-        }
-        if has_auth_error(&resp) {
-            return Err(ErrorPayload::new(
-                ErrorKind::AuthExpired,
-                "UserTweets 返回 HTTP 200 但含鉴权类 errors",
-            ));
-        }
-        if resp.is_null() {
-            return Err(ErrorPayload::new(
-                ErrorKind::NetworkError,
-                "UserTweets 返回非 JSON 响应（可能被网络中间层拦截），可重试",
-            ));
-        }
-
-        let (entries, new_cursor) = parse_likes_response(&resp);
-        for entry in entries {
-            if let Some(summary) = entry_to_summary(&entry, req.include_raw) {
-                all_summaries.push(summary);
-                if req.include_raw {
-                    all_raw.push(entry);
-                }
-            }
-        }
-
-        if !req.all {
-            cursor = new_cursor;
-            break;
-        }
-
-        match new_cursor {
-            None => {
-                cursor = None;
-                break;
-            }
-            Some(ref c) if Some(c) == cursor.as_ref() => {
-                cursor = new_cursor;
-                break;
-            }
-            _ => {
-                cursor = new_cursor;
-            }
-        }
-    }
+    let user_id = user.rest_id.clone();
+    let (tweets, raw_entries, cursor) = collect_pages(
+        move |cursor: Option<String>| {
+            let api = Arc::clone(&api);
+            let user_id = user_id.clone();
+            Box::pin(async move {
+                api.get_user_tweets(&user_id, count as i64, cursor.as_deref())
+                    .await
+            })
+        },
+        req.all,
+        req.since_cursor.clone(),
+        req.include_raw,
+    )
+    .await?;
 
     Ok(UserTweetsOutput {
         user,
-        tweets: all_summaries,
+        tweets,
         cursor,
         schema_version: SCHEMA_VERSION,
-        raw_entries: if req.include_raw { Some(all_raw) } else { None },
+        raw_entries: if req.include_raw {
+            Some(raw_entries)
+        } else {
+            None
+        },
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+    use std::collections::VecDeque;
 
     const UBSN_OK: &str = include_str!("../../tests/fixtures/user_tweets/ubsn_ok.json");
     const UBSN_NOTFOUND: &str = include_str!("../../tests/fixtures/user_tweets/ubsn_notfound.json");
@@ -341,5 +419,196 @@ mod tests {
         assert!(!has_auth_error(&resp));
         let resp: Value = serde_json::from_str("{}").unwrap();
         assert!(!has_auth_error(&resp));
+    }
+
+    // ---- GraphQL 操作错误分类（review：非鉴权 errors 不得误报用户不存在 / 部分成功） ----
+
+    #[test]
+    fn operation_error_is_retryable_when_data_missing() {
+        let resp = json!({"errors": [{"message": "Internal server error"}], "data": null});
+        let err = operation_error(&resp).expect("must be classified as operation error");
+        assert_eq!(err.kind, ErrorKind::NetworkError);
+    }
+
+    #[test]
+    fn operation_error_tolerated_when_data_present() {
+        // 告警型 errors + 可用 data：保留可用内容（容忍降级）
+        let resp = json!({"data": {"user": {"result": {"rest_id": "900000001"}}}, "errors": [{"message": "partial"}]});
+        assert!(operation_error(&resp).is_none());
+    }
+
+    #[test]
+    fn operation_error_ignores_error_free_and_empty_errors() {
+        assert!(operation_error(&json!({"data": {}})).is_none());
+        assert!(operation_error(&json!({"errors": [], "data": null})).is_none());
+        assert!(operation_error(&json!({"data": null})).is_none());
+    }
+
+    #[test]
+    fn lookup_operation_error_is_not_reported_as_missing_user() {
+        let resp = json!({"errors": [{"message": "Internal server error"}], "data": null});
+        let err = parse_lookup(200, &resp, "fixture_user_a").unwrap_err();
+        assert_eq!(
+            err.kind,
+            ErrorKind::NetworkError,
+            "上游操作错误必须是可重试的 network_error，不能是 tweet_unavailable"
+        );
+    }
+
+    #[test]
+    fn lookup_error_free_missing_user_is_unavailable() {
+        // 合法缺用户形态：HTTP 200 + {"data":{}}（无 errors）
+        let resp = json!({"data": {}});
+        let err = parse_lookup(200, &resp, "fixture_user_a").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::TweetUnavailable);
+    }
+
+    #[test]
+    fn lookup_auth_error_wins_over_operation_error() {
+        let resp = json!({"errors": [{"code": 32, "message": "Not authorized"}], "data": null});
+        let err = parse_lookup(200, &resp, "fixture_user_a").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::AuthExpired);
+    }
+
+    #[test]
+    fn lookup_non_json_is_retryable() {
+        let err = parse_lookup(200, &Value::Null, "fixture_user_a").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NetworkError);
+    }
+
+    // ---- 翻页（review：第 2 页失败不得返回第 1 页的部分成功） ----
+
+    fn page(entries: Vec<Value>, cursor: Option<&str>) -> Value {
+        let mut all = entries;
+        if let Some(c) = cursor {
+            all.push(json!({
+                "entryId": format!("cursor-bottom-{}", c),
+                "content": { "value": c }
+            }));
+        }
+        json!({
+            "data": { "user": { "result": { "timeline": { "timeline": {
+                "instructions": [{ "type": "TimelineAddEntries", "entries": all }]
+            } } } } }
+        })
+    }
+
+    fn tweet_entry(id: &str) -> Value {
+        json!({
+            "entryId": format!("tweet-{}", id),
+            "content": { "itemContent": { "tweet_results": { "result": {
+                "rest_id": id,
+                "core": { "user_results": { "result": {
+                    "rest_id": "900000001",
+                    "core": { "screen_name": "fixture_user_a", "name": "Fixture User A" }
+                } } },
+                "legacy": { "full_text": "Fixture tweet text (placeholder)." }
+            } } } }
+        })
+    }
+
+    #[tokio::test]
+    async fn collect_pages_single_page_when_all_false() {
+        let mut pages = VecDeque::from(vec![Ok((
+            200u16,
+            page(vec![tweet_entry("1700000000000031002")], Some("C1")),
+        ))]);
+        let (tweets, raw, cursor) = collect_pages(
+            move |_| {
+                let p = pages.pop_front().expect("one page");
+                Box::pin(async move { p }) as PageFuture
+            },
+            false,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tweets.len(), 1);
+        assert_eq!(cursor.as_deref(), Some("C1"));
+        assert!(raw.is_empty());
+    }
+
+    #[tokio::test]
+    async fn collect_pages_failure_after_one_page_returns_err_not_partial() {
+        // 第 1 页成功、第 2 页返回非鉴权操作错误：整体必须 Err，不能把第 1 页当完整结果。
+        let mut pages = VecDeque::from(vec![
+            Ok((
+                200u16,
+                page(vec![tweet_entry("1700000000000031002")], Some("C1")),
+            )),
+            Ok((
+                200u16,
+                json!({"errors": [{"message": "Internal server error"}], "data": null}),
+            )),
+        ]);
+        let result = collect_pages(
+            move |_| {
+                let p = pages.pop_front().expect("two pages");
+                Box::pin(async move { p }) as PageFuture
+            },
+            true,
+            None,
+            false,
+        )
+        .await;
+        match result {
+            Err(err) => assert_eq!(err.kind, ErrorKind::NetworkError),
+            Ok((tweets, _, _)) => panic!(
+                "page-2 failure must not return a partial success, got {} tweets",
+                tweets.len()
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn collect_pages_stops_on_repeated_cursor() {
+        let mut pages = VecDeque::from(vec![
+            Ok((
+                200u16,
+                page(vec![tweet_entry("1700000000000031002")], Some("C1")),
+            )),
+            Ok((
+                200u16,
+                page(vec![tweet_entry("1700000000000031010")], Some("C1")),
+            )),
+        ]);
+        let (tweets, _, cursor) = collect_pages(
+            move |_| {
+                let p = pages.pop_front().expect("two pages");
+                Box::pin(async move { p }) as PageFuture
+            },
+            true,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tweets.len(), 2, "两页各一条，游标重复即停");
+        assert_eq!(cursor.as_deref(), Some("C1"));
+    }
+
+    #[tokio::test]
+    async fn collect_pages_aggregates_until_cursor_none() {
+        let mut pages = VecDeque::from(vec![
+            Ok((
+                200u16,
+                page(vec![tweet_entry("1700000000000031002")], Some("C1")),
+            )),
+            Ok((200u16, page(vec![tweet_entry("1700000000000031010")], None))),
+        ]);
+        let (tweets, _, cursor) = collect_pages(
+            move |_| {
+                let p = pages.pop_front().expect("two pages");
+                Box::pin(async move { p }) as PageFuture
+            },
+            true,
+            None,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(tweets.len(), 2);
+        assert_eq!(cursor, None);
     }
 }
