@@ -456,6 +456,9 @@ printf '%s\n' "$prepare_if" | grep -F "mode == 'prepare'" >/dev/null ||
 ok "workflow wiring"
 
 # release.sh 只打印，不调用 gh。
+# patch 的期望值来自夹具 Cargo.toml，不读本仓库当前版本。
+# 发布号从 2026.11.0 变成 2026.11.1 之后，对真实检出跑 patch --dry-run
+# 会得到 2026.11.1 -> 2026.11.2，不能再写死旧的 2026.11.0 -> 2026.11.1。
 FAIL_BIN=$(mktemp -d)
 TMPS+=("$FAIL_BIN")
 cat >"$FAIL_BIN/gh" <<'EOF'
@@ -468,9 +471,31 @@ dry_auto=$(PATH="$FAIL_BIN:/usr/bin:/bin" bash "$ROOT/scripts/release.sh" --dry-
 printf '%s\n' "$dry_auto" | grep -F "不传 version" >/dev/null || fail "auto dry-run: $dry_auto"
 dry_ver=$(PATH="$FAIL_BIN:/usr/bin:/bin" bash "$ROOT/scripts/release.sh" 2026.12.0 --dry-run)
 printf '%s\n' "$dry_ver" | grep -F "version=2026.12.0" >/dev/null || fail "explicit dry-run: $dry_ver"
-dry_patch=$(PATH="$FAIL_BIN:/usr/bin:/bin" bash "$ROOT/scripts/release.sh" patch --dry-run)
-printf '%s\n' "$dry_patch" | grep -F "2026.11.0 -> 2026.11.1" >/dev/null ||
-    fail "patch dry-run: $dry_patch"
+
+release_sh_patch_dry_run() {
+    local version=$1 parent repo out ma mi pa next
+    parent=$(mktemp -d)
+    TMPS+=("$parent")
+    repo=$parent/repo
+    mkdir -p "$repo/scripts"
+    cp "$ROOT/scripts/release.sh" "$repo/scripts/release.sh"
+    chmod +x "$repo/scripts/release.sh"
+    cat >"$repo/Cargo.toml" <<EOF
+[package]
+name = "x_likes_downloader"
+version = "${version}"
+edition = "2021"
+EOF
+    IFS=. read -r ma mi pa <<<"$version"
+    next="${ma}.${mi}.$((pa + 1))"
+    out=$(PATH="$FAIL_BIN:/usr/bin:/bin" bash "$repo/scripts/release.sh" patch --dry-run)
+    printf '%s\n' "$out" | grep -F "${version} -> ${next}" >/dev/null ||
+        fail "patch dry-run from ${version}: $out"
+    printf '%s\n' "$out" | grep -F "version=${next}" >/dev/null ||
+        fail "patch dispatch line from ${version}: $out"
+}
+release_sh_patch_dry_run 2026.11.0
+release_sh_patch_dry_run 2026.11.1
 ok "release.sh dry-run does not dispatch"
 
 printf 'release_plan_test: OK (%s cases)\n' "$CASES"
