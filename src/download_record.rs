@@ -18,14 +18,15 @@ use sha2::{Digest, Sha256};
 
 use crate::agent::types::{
     DownloadOutput, DownloadResult, DownloadStatus, DownloadSummary, MediaItem, MediaType,
+    TweetSummary,
 };
 use crate::config::Config;
 use crate::error::{ErrorKind, ErrorPayload};
 
-/// 新流程的完成口径：只看本次调用提交的媒体项，不代表原推文的全部媒体。
-pub const COVERAGE_SUPPLIED_ITEMS: &str = "supplied_items";
+/// 批次使用的覆盖口径：对照服务端自己观察到的原帖媒体清单，而不是调用方声明。
+pub const COVERAGE_ORIGINAL_MEDIA: &str = "original_media";
 
-const COVERAGE_LIMIT: &str = "只表示该推文在本次调用中提交的媒体项全部为 downloaded 或 skipped_existing。不表示原推文的全部媒体都已下载。写入 DOWNLOAD_RECORD 后，今后 legacy 点赞下载会跳过这些 tweet ID。本记录不证明文件仍在原路径，也不证明它们在 legacy DOWNLOAD_DIR 中。";
+const COVERAGE_LIMIT: &str = "整帖记录候选只来自服务端在 list_likes / fetch_tweet / user_tweets 中观察到并落盘的媒体清单，且这些媒体在本次下载中全部成功。partial 与 unknown 不能写入 DOWNLOAD_RECORD。调用方不能用 complete:true 自行声明覆盖完整。清单是最近一次服务端观察，提交时会再读盘核对；它不证明文件仍在原路径或 legacy DOWNLOAD_DIR。";
 
 const SCHEMA_VERSION: u32 = 1;
 
@@ -37,6 +38,7 @@ static BATCH_COUNTER: AtomicU64 = AtomicU64::new(1);
 pub struct RecordPaths {
     pub record_path: PathBuf,
     pub batches_dir: PathBuf,
+    pub manifests_dir: PathBuf,
 }
 
 impl RecordPaths {
@@ -50,6 +52,7 @@ impl RecordPaths {
         Self {
             record_path,
             batches_dir: parent.join("download_record_batches"),
+            manifests_dir: parent.join("tweet_media_manifests"),
         }
     }
 
@@ -81,6 +84,10 @@ pub enum RecordBatchState {
 )]
 #[serde(rename_all = "snake_case")]
 pub enum ExclusionReason {
+    /// 没有服务端观察到的原帖媒体清单，不能当成整帖已下载。
+    UnknownOriginalCoverage,
+    /// 清单存在，但本次成功媒体没有覆盖清单中的全部条目。
+    PartialOriginalCoverage,
     /// 本次提交的媒体项没有全部成功（含部分失败、取消、缺失）。
     IncompleteSuppliedItems,
     AllFailed,
@@ -96,6 +103,7 @@ pub enum ExclusionReason {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct CandidateTweet {
     pub tweet_id: String,
+    pub original_coverage: OriginalCoverage,
     pub media_ids: Vec<String>,
     pub supplied_count: u32,
     pub succeeded_count: u32,
@@ -104,6 +112,7 @@ pub struct CandidateTweet {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExcludedTweet {
     pub tweet_id: String,
+    pub original_coverage: OriginalCoverage,
     pub reason: ExclusionReason,
     pub supplied_count: u32,
     pub succeeded_count: u32,
@@ -115,6 +124,9 @@ pub struct ExcludedTweet {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ItemFact {
     pub media_id: String,
+    /// 与服务端媒体清单对齐的键。不包含媒体 URL。无法配对的结果为空。
+    #[serde(default)]
+    pub original_media_key: String,
     pub media_type: String,
     /// 不是媒体 URL。看起来像 URL 的文件名会改成占位，避免把会过期的地址写入批次。
     pub suggested_filename: String,
@@ -122,10 +134,32 @@ pub struct ItemFact {
     pub bytes: u64,
 }
 
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OriginalCoverage {
+    Complete,
+    Partial,
+    #[default]
+    Unknown,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct TweetFact {
     pub tweet_id: String,
     pub eligible: bool,
+    /// 缺省按 unknown 解析，因此旧批次不能靠缺少字段变成整帖候选。
+    #[serde(default)]
+    pub original_coverage: OriginalCoverage,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<ExclusionReason>,
     pub supplied_count: u32,
@@ -212,6 +246,22 @@ pub struct CommitDownloadRecordOutput {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ManifestMedia {
+    media_key: String,
+    media_type: String,
+    suggested_filename: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct PersistedManifest {
+    schema_version: u32,
+    tweet_id: String,
+    source: String,
+    observed_at: String,
+    media: Vec<ManifestMedia>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct PersistedBatch {
     schema_version: u32,
     batch_id: String,
@@ -270,7 +320,7 @@ pub fn capture_download_batch(
         RecordConfirmation {
             state: RecordBatchState::NothingToRecord,
             batch_id: None,
-            coverage: COVERAGE_SUPPLIED_ITEMS.to_string(),
+            coverage: COVERAGE_ORIGINAL_MEDIA.to_string(),
             agent_must_ask_user: false,
             user_permission_verified: false,
             candidates: Vec::new(),
@@ -279,7 +329,7 @@ pub fn capture_download_batch(
             error: None,
         }
     } else {
-        let batch = build_batch(items, &output.downloads);
+        let batch = build_batch(paths, items, &output.downloads);
         persist_batch(paths, &batch)?;
         confirmation_from_batch(&batch, None)
     };
@@ -301,7 +351,7 @@ pub fn capture_unavailable(
         record_confirmation: RecordConfirmation {
             state: RecordBatchState::Unavailable,
             batch_id: None,
-            coverage: COVERAGE_SUPPLIED_ITEMS.to_string(),
+            coverage: COVERAGE_ORIGINAL_MEDIA.to_string(),
             agent_must_ask_user: false,
             user_permission_verified: false,
             candidates: Vec::new(),
@@ -345,15 +395,16 @@ pub fn commit_download_record(
     if batch.batch_id != batch_id {
         return Err(invalid("批次内容与 batch_id 不一致，已拒绝写入"));
     }
-    let eligible = eligible_ids(&batch);
-    let rejected: Vec<&str> = selected
-        .iter()
-        .filter(|id| !eligible.contains(id.as_str()))
-        .map(String::as_str)
-        .collect();
-    if !rejected.is_empty() {
+    let rejected = selected.iter().any(|id| {
+        batch
+            .tweets
+            .iter()
+            .find(|tweet| &tweet.tweet_id == id)
+            .is_none_or(|tweet| !tweet_still_complete(paths, tweet))
+    });
+    if rejected {
         return Err(invalid(
-            "请求包含该批次成功候选之外的 tweet ID，已拒绝整次写入",
+            "请求包含原帖覆盖不是 complete 的 tweet ID，已拒绝整次写入",
         ));
     }
 
@@ -631,7 +682,127 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ErrorPayload> {
     Ok(())
 }
 
-fn build_batch(items: &[MediaItem], results: &[DownloadResult]) -> PersistedBatch {
+/// 把本进程从 list_likes / fetch_tweet / user_tweets 解析出的媒体清单落盘。
+/// 下载工具不写这份清单，也不能用请求参数把它标成 complete。
+pub fn observe_tweets(
+    paths: &RecordPaths,
+    source: &str,
+    tweets: &[TweetSummary],
+) -> Result<(), ErrorPayload> {
+    let sets: Vec<(&str, &[MediaItem])> = tweets
+        .iter()
+        .map(|tweet| (tweet.id.as_str(), tweet.media.as_slice()))
+        .collect();
+    observe_media_sets(paths, source, &sets)
+}
+
+pub fn observe_media_sets(
+    paths: &RecordPaths,
+    source: &str,
+    sets: &[(&str, &[MediaItem])],
+) -> Result<(), ErrorPayload> {
+    let source = sanitize_source(source);
+    for (tweet_id, media) in sets {
+        if !is_safe_tweet_id(tweet_id) {
+            continue;
+        }
+        let path = manifest_file(paths, tweet_id)?;
+        if media.is_empty() {
+            if path.is_file() {
+                fs::remove_file(&path).map_err(|err| {
+                    ErrorPayload::new(
+                        ErrorKind::InternalError,
+                        format!("无法移除空的媒体清单: {err}"),
+                    )
+                })?;
+            }
+            continue;
+        }
+        let manifest = PersistedManifest {
+            schema_version: SCHEMA_VERSION,
+            tweet_id: (*tweet_id).to_string(),
+            source: source.clone(),
+            observed_at: Utc::now().to_rfc3339(),
+            media: media
+                .iter()
+                .map(|item| {
+                    let media_type = media_type_name(&item.kind);
+                    ManifestMedia {
+                        media_key: original_media_key(
+                            tweet_id,
+                            media_type,
+                            &item.suggested_filename,
+                        ),
+                        media_type: media_type.to_string(),
+                        suggested_filename: stored_filename(&item.suggested_filename),
+                    }
+                })
+                .collect(),
+        };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| {
+                ErrorPayload::new(
+                    ErrorKind::InternalError,
+                    format!("无法创建媒体清单目录: {err}"),
+                )
+            })?;
+        }
+        let mut bytes = serde_json::to_vec_pretty(&manifest).map_err(|err| {
+            ErrorPayload::new(
+                ErrorKind::InternalError,
+                format!("无法序列化媒体清单: {err}"),
+            )
+        })?;
+        bytes.push(b'\n');
+        atomic_write(&path, &bytes)?;
+    }
+    Ok(())
+}
+
+fn sanitize_source(source: &str) -> String {
+    let cleaned: String = source
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .take(32)
+        .collect();
+    if cleaned.is_empty() {
+        "unknown".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn manifest_file(paths: &RecordPaths, tweet_id: &str) -> Result<PathBuf, ErrorPayload> {
+    if !is_safe_tweet_id(tweet_id) {
+        return Err(invalid("tweet ID 不能作为媒体清单路径"));
+    }
+    Ok(paths.manifests_dir.join(format!("{tweet_id}.json")))
+}
+
+fn load_manifest(paths: &RecordPaths, tweet_id: &str) -> Option<PersistedManifest> {
+    let path = manifest_file(paths, tweet_id).ok()?;
+    let meta = fs::symlink_metadata(&path).ok()?;
+    if !meta.file_type().is_file() {
+        return None;
+    }
+    let bytes = fs::read(&path).ok()?;
+    let manifest: PersistedManifest = serde_json::from_slice(&bytes).ok()?;
+    if manifest.schema_version != SCHEMA_VERSION || manifest.tweet_id != tweet_id {
+        return None;
+    }
+    if manifest.media.iter().any(|media| {
+        media.media_key.len() != 64 || media.media_key.bytes().any(|b| !b.is_ascii_hexdigit())
+    }) {
+        return None;
+    }
+    Some(manifest)
+}
+
+fn build_batch(
+    paths: &RecordPaths,
+    items: &[MediaItem],
+    results: &[DownloadResult],
+) -> PersistedBatch {
     let mut order = Vec::new();
     let mut groups: HashMap<String, Vec<Slot>> = HashMap::new();
     for item in items {
@@ -670,7 +841,8 @@ fn build_batch(items: &[MediaItem], results: &[DownloadResult]) -> PersistedBatc
     for tweet_id in order {
         let slots = groups.remove(&tweet_id).unwrap_or_default();
         let extra = unpaired.remove(&tweet_id).unwrap_or_default();
-        tweets.push(tweet_fact(&tweet_id, &slots, &extra));
+        let manifest = load_manifest(paths, &tweet_id);
+        tweets.push(tweet_fact(&tweet_id, &slots, &extra, manifest.as_ref()));
     }
 
     let state = if tweets.iter().any(|tweet| tweet.eligible) {
@@ -683,7 +855,7 @@ fn build_batch(items: &[MediaItem], results: &[DownloadResult]) -> PersistedBatc
         batch_id: new_batch_id(),
         created_at: Utc::now().to_rfc3339(),
         state,
-        coverage: COVERAGE_SUPPLIED_ITEMS.to_string(),
+        coverage: COVERAGE_ORIGINAL_MEDIA.to_string(),
         tweets,
         committed_tweet_ids: Vec::new(),
     }
@@ -695,7 +867,12 @@ struct Slot {
     result: Option<DownloadResult>,
 }
 
-fn tweet_fact(tweet_id: &str, slots: &[Slot], unpaired: &[DownloadResult]) -> TweetFact {
+fn tweet_fact(
+    tweet_id: &str,
+    slots: &[Slot],
+    unpaired: &[DownloadResult],
+    manifest: Option<&PersistedManifest>,
+) -> TweetFact {
     let mut items = Vec::new();
     let mut succeeded = 0u32;
     let mut failed = 0u32;
@@ -712,14 +889,20 @@ fn tweet_fact(tweet_id: &str, slots: &[Slot], unpaired: &[DownloadResult]) -> Tw
             "cancelled" => cancelled += 1,
             _ => missing += 1,
         }
+        let media_type = media_type_name(&slot.item.kind);
         items.push(ItemFact {
             media_id: media_id(
                 tweet_id,
                 slot.ordinal,
-                media_type_name(&slot.item.kind),
+                media_type,
                 &slot.item.suggested_filename,
             ),
-            media_type: media_type_name(&slot.item.kind).to_string(),
+            original_media_key: original_media_key(
+                tweet_id,
+                media_type,
+                &slot.item.suggested_filename,
+            ),
+            media_type: media_type.to_string(),
             suggested_filename: stored_filename(&slot.item.suggested_filename),
             status: status.to_string(),
             bytes,
@@ -728,6 +911,7 @@ fn tweet_fact(tweet_id: &str, slots: &[Slot], unpaired: &[DownloadResult]) -> Tw
     for (index, result) in unpaired.iter().enumerate() {
         items.push(ItemFact {
             media_id: unpaired_media_id(tweet_id, index as u32, &result.url, &result.status),
+            original_media_key: String::new(),
             media_type: "unknown".to_string(),
             suggested_filename: "(unpaired)".to_string(),
             status: status_name(&result.status).to_string(),
@@ -736,18 +920,11 @@ fn tweet_fact(tweet_id: &str, slots: &[Slot], unpaired: &[DownloadResult]) -> Tw
     }
 
     let supplied = slots.len() as u32;
-    let (eligible, reason) = classify_tweet(
-        tweet_id,
-        supplied,
-        succeeded,
-        failed,
-        cancelled,
-        missing,
-        unpaired.len() as u32,
-    );
+    let (coverage, eligible, reason) = decide_coverage(tweet_id, &items, manifest);
     TweetFact {
         tweet_id: tweet_id.to_string(),
         eligible,
+        original_coverage: coverage,
         reason,
         supplied_count: supplied,
         succeeded_count: succeeded,
@@ -758,41 +935,64 @@ fn tweet_fact(tweet_id: &str, slots: &[Slot], unpaired: &[DownloadResult]) -> Tw
     }
 }
 
-fn classify_tweet(
+fn decide_coverage(
     tweet_id: &str,
-    supplied: u32,
-    succeeded: u32,
-    failed: u32,
-    cancelled: u32,
-    missing: u32,
-    unpaired: u32,
-) -> (bool, Option<ExclusionReason>) {
+    items: &[ItemFact],
+    manifest: Option<&PersistedManifest>,
+) -> (OriginalCoverage, bool, Option<ExclusionReason>) {
     if !is_safe_tweet_id(tweet_id) {
-        return (false, Some(ExclusionReason::UnsafeTweetId));
+        return (
+            OriginalCoverage::Unknown,
+            false,
+            Some(ExclusionReason::UnsafeTweetId),
+        );
     }
-    if supplied == 0 {
-        let reason = if unpaired > 0 {
-            ExclusionReason::UnpairedResult
-        } else {
-            ExclusionReason::NoItems
-        };
-        return (false, Some(reason));
+    let Some(manifest) = manifest else {
+        return (
+            OriginalCoverage::Unknown,
+            false,
+            Some(ExclusionReason::UnknownOriginalCoverage),
+        );
+    };
+    if manifest.tweet_id != tweet_id || manifest.media.is_empty() {
+        return (
+            OriginalCoverage::Unknown,
+            false,
+            Some(ExclusionReason::UnknownOriginalCoverage),
+        );
     }
-    let complete =
-        unpaired == 0 && missing == 0 && failed == 0 && cancelled == 0 && succeeded == supplied;
-    if complete {
-        return (true, None);
+    let mut required: HashMap<&str, u32> = HashMap::new();
+    for media in &manifest.media {
+        *required.entry(media.media_key.as_str()).or_insert(0) += 1;
     }
-    if succeeded == 0 && failed > 0 && cancelled == 0 && missing == 0 && unpaired == 0 {
-        return (false, Some(ExclusionReason::AllFailed));
+    let mut success: HashMap<&str, u32> = HashMap::new();
+    for item in items {
+        if item.original_media_key.is_empty() {
+            continue;
+        }
+        if item.status == "downloaded" || item.status == "skipped_existing" {
+            *success.entry(item.original_media_key.as_str()).or_insert(0) += 1;
+        }
     }
-    if succeeded == 0 && cancelled > 0 && failed == 0 && missing == 0 && unpaired == 0 {
-        return (false, Some(ExclusionReason::Cancelled));
+    let covered = required
+        .iter()
+        .all(|(key, count)| success.get(key).copied().unwrap_or(0) >= *count);
+    if covered {
+        (OriginalCoverage::Complete, true, None)
+    } else {
+        (
+            OriginalCoverage::Partial,
+            false,
+            Some(ExclusionReason::PartialOriginalCoverage),
+        )
     }
-    if unpaired > 0 && succeeded == 0 && failed == 0 && cancelled == 0 && missing == 0 {
-        return (false, Some(ExclusionReason::UnpairedResult));
-    }
-    (false, Some(ExclusionReason::IncompleteSuppliedItems))
+}
+
+fn tweet_still_complete(paths: &RecordPaths, tweet: &TweetFact) -> bool {
+    let Some(manifest) = load_manifest(paths, &tweet.tweet_id) else {
+        return false;
+    };
+    decide_coverage(&tweet.tweet_id, &tweet.items, Some(&manifest)).1
 }
 
 fn confirmation_from_batch(batch: &PersistedBatch, error: Option<String>) -> RecordConfirmation {
@@ -854,7 +1054,13 @@ fn summary_from_batch(batch: &PersistedBatch) -> BatchSummary {
             .map(|candidate| candidate.tweet_id)
             .collect(),
         committed_tweet_ids: batch.committed_tweet_ids.clone(),
-        exclusion_count: batch.tweets.iter().filter(|tweet| !tweet.eligible).count(),
+        exclusion_count: batch
+            .tweets
+            .iter()
+            .filter(|tweet| {
+                !(tweet.eligible && tweet.original_coverage == OriginalCoverage::Complete)
+            })
+            .count(),
     }
 }
 
@@ -862,7 +1068,7 @@ fn candidates_of(batch: &PersistedBatch, skip_committed: bool) -> Vec<CandidateT
     batch
         .tweets
         .iter()
-        .filter(|tweet| tweet.eligible)
+        .filter(|tweet| tweet.eligible && tweet.original_coverage == OriginalCoverage::Complete)
         .filter(|tweet| {
             !skip_committed
                 || !batch
@@ -872,6 +1078,7 @@ fn candidates_of(batch: &PersistedBatch, skip_committed: bool) -> Vec<CandidateT
         })
         .map(|tweet| CandidateTweet {
             tweet_id: tweet.tweet_id.clone(),
+            original_coverage: tweet.original_coverage,
             media_ids: tweet
                 .items
                 .iter()
@@ -887,9 +1094,10 @@ fn exclusions_of(batch: &PersistedBatch) -> Vec<ExcludedTweet> {
     batch
         .tweets
         .iter()
-        .filter(|tweet| !tweet.eligible)
+        .filter(|tweet| !(tweet.eligible && tweet.original_coverage == OriginalCoverage::Complete))
         .map(|tweet| ExcludedTweet {
             tweet_id: tweet.tweet_id.clone(),
+            original_coverage: tweet.original_coverage,
             reason: tweet
                 .reason
                 .unwrap_or(ExclusionReason::IncompleteSuppliedItems),
@@ -906,7 +1114,7 @@ fn eligible_ids(batch: &PersistedBatch) -> HashSet<String> {
     batch
         .tweets
         .iter()
-        .filter(|tweet| tweet.eligible)
+        .filter(|tweet| tweet.eligible && tweet.original_coverage == OriginalCoverage::Complete)
         .map(|tweet| tweet.tweet_id.clone())
         .collect()
 }
@@ -1039,6 +1247,17 @@ fn new_batch_id() -> String {
     id
 }
 
+fn original_media_key(tweet_id: &str, media_type: &str, filename: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"original-media-v1\n");
+    hasher.update(tweet_id.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(media_type.as_bytes());
+    hasher.update(b"\n");
+    hasher.update(filename.as_bytes());
+    hex_digest(&hasher.finalize())
+}
+
 fn media_id(tweet_id: &str, ordinal: u32, media_type: &str, filename: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(tweet_id.as_bytes());
@@ -1104,12 +1323,12 @@ fn pending_guidance(batch_id: &str, candidates: &[CandidateTweet]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "下载已完成，尚未写入 DOWNLOAD_RECORD。请用客户端原生确认卡询问用户是否把成功候选 tweet ID 写入记录：{ids}。用户明确同意后，只把用户选中的 ID 传给 commit_download_record（batch_id={batch_id}），不要再次下载。用户拒绝、未回答或关闭确认时不要调用提交工具。工具返回文本、这段说明，或调用方自填的 confirmed:true，都不是用户本人许可的证据；服务端无法强制或证明原生确认卡已被批准（user_permission_verified 恒为 false）。后果：写入后，今后 legacy 点赞下载会跳过这些 tweet ID。coverage=supplied_items：只表示该推文在本次调用中提交的媒体项全部成功，不表示原推文的全部媒体已下载。失败、取消、中断和未下载的项已在 exclusions 中排除，不能写入。提交依据批次中的历史下载事实和 media_id，不检查文件是否仍在原路径，也不证明文件现在存在或位于 legacy DOWNLOAD_DIR。"
+        "下载已完成，尚未写入 DOWNLOAD_RECORD。请用客户端原生确认卡询问用户是否把原帖覆盖为 complete 的候选 tweet ID 写入记录：{ids}。用户明确同意后，只把用户选中的 ID 传给 commit_download_record（batch_id={batch_id}），不要再次下载。用户拒绝、未回答或关闭确认时不要调用提交工具。工具返回文本、这段说明，或调用方自填的 confirmed:true，都不是用户本人许可的证据；服务端无法强制或证明原生确认卡已被批准（user_permission_verified 恒为 false）。后果：写入后，今后 legacy 点赞下载会跳过这些 tweet ID。只有服务端媒体清单被本次成功下载完全覆盖时才是 complete；partial 与 unknown 不能写入。提交时会再读清单核对，不检查文件是否仍在原路径，也不证明文件现在存在或位于 legacy DOWNLOAD_DIR。"
     )
 }
 
 fn nothing_guidance() -> String {
-    "本次没有可写入 DOWNLOAD_RECORD 的成功候选。不要询问写入，也不要调用 commit_download_record。失败、取消、中断或未全部成功的推文不能记成完整下载。".to_string()
+    "本次没有可写入 DOWNLOAD_RECORD 的整帖候选。原帖覆盖为 partial 或 unknown 的推文不能记成完整下载。不要询问写入，也不要调用 commit_download_record。".to_string()
 }
 
 fn unavailable_guidance() -> String {
@@ -1212,6 +1431,32 @@ mod tests {
         capture_download_batch(&paths_in(dir), items, &output(results)).unwrap()
     }
 
+    fn observe_all(dir: &Path, items: &[MediaItem]) {
+        let mut order = Vec::new();
+        let mut grouped: HashMap<String, Vec<MediaItem>> = HashMap::new();
+        for item in items {
+            if !grouped.contains_key(&item.tweet_id) {
+                order.push(item.tweet_id.clone());
+            }
+            grouped
+                .entry(item.tweet_id.clone())
+                .or_default()
+                .push(item.clone());
+        }
+        let owned: Vec<(String, Vec<MediaItem>)> = order
+            .into_iter()
+            .map(|id| {
+                let media = grouped.remove(&id).unwrap_or_default();
+                (id, media)
+            })
+            .collect();
+        let sets: Vec<(&str, &[MediaItem])> = owned
+            .iter()
+            .map(|(id, media)| (id.as_str(), media.as_slice()))
+            .collect();
+        observe_media_sets(&paths_in(dir), "test", &sets).unwrap();
+    }
+
     #[test]
     fn capture_does_not_write_download_record() {
         let dir = tempfile::tempdir().unwrap();
@@ -1226,21 +1471,20 @@ mod tests {
         assert!(!paths_in(dir.path()).record_path.exists());
         assert_eq!(
             captured.record_confirmation.state,
-            RecordBatchState::Pending
+            RecordBatchState::NothingToRecord
         );
-        assert!(captured.record_confirmation.agent_must_ask_user);
+        assert!(!captured.record_confirmation.agent_must_ask_user);
         assert!(!captured.record_confirmation.user_permission_verified);
-        assert!(captured.record_confirmation.batch_id.is_some());
-        assert_eq!(captured.record_confirmation.candidates.len(), 1);
-        assert!(captured.record_confirmation.guidance.contains("原生确认卡"));
-        assert!(captured
-            .record_confirmation
-            .guidance
-            .contains("confirmed:true"));
-        assert!(captured
-            .record_confirmation
-            .guidance
-            .contains("DOWNLOAD_RECORD"));
+        assert!(captured.record_confirmation.candidates.is_empty());
+        assert_eq!(
+            captured.record_confirmation.exclusions[0].original_coverage,
+            OriginalCoverage::Unknown
+        );
+        assert_eq!(
+            captured.record_confirmation.exclusions[0].reason,
+            ExclusionReason::UnknownOriginalCoverage
+        );
+        assert!(captured.record_confirmation.guidance.contains("unknown"));
     }
 
     #[test]
@@ -1255,6 +1499,7 @@ mod tests {
             item("1004", "f.jpg"),
             item("1005", "g.jpg"),
         ];
+        observe_all(dir.path(), &items);
         let results = vec![
             result_ok(dir.path(), "1001", "a.jpg"),
             result_ok(dir.path(), "1001", "b.jpg"),
@@ -1300,9 +1545,18 @@ mod tests {
                 .map(|exclusion| exclusion.reason)
                 .unwrap()
         };
-        assert_eq!(reason("1002"), ExclusionReason::IncompleteSuppliedItems);
-        assert_eq!(reason("1003"), ExclusionReason::Cancelled);
-        assert_eq!(reason("1004"), ExclusionReason::AllFailed);
+        assert_eq!(reason("1002"), ExclusionReason::PartialOriginalCoverage);
+        assert_eq!(reason("1003"), ExclusionReason::PartialOriginalCoverage);
+        assert_eq!(reason("1004"), ExclusionReason::PartialOriginalCoverage);
+        assert_eq!(
+            confirmation
+                .candidates
+                .iter()
+                .find(|candidate| candidate.tweet_id == "1001")
+                .unwrap()
+                .original_coverage,
+            OriginalCoverage::Complete
+        );
 
         let batch_id = confirmation.batch_id.clone().unwrap();
         let paths = paths_in(dir.path());
@@ -1330,16 +1584,22 @@ mod tests {
     fn missing_result_and_unpaired_success_are_not_eligible() {
         let dir = tempfile::tempdir().unwrap();
         let items = vec![item("1001", "a.jpg"), item("1001", "b.jpg")];
+        observe_all(dir.path(), &items);
         let results = vec![result_ok(dir.path(), "1001", "a.jpg")];
         let captured = capture(dir.path(), &items, results);
         assert!(captured.record_confirmation.candidates.is_empty());
         assert_eq!(
+            captured.record_confirmation.exclusions[0].original_coverage,
+            OriginalCoverage::Partial
+        );
+        assert_eq!(
             captured.record_confirmation.exclusions[0].reason,
-            ExclusionReason::IncompleteSuppliedItems
+            ExclusionReason::PartialOriginalCoverage
         );
         assert_eq!(captured.record_confirmation.exclusions[0].missing_count, 1);
 
         let items = vec![item("2001", "a.jpg")];
+        observe_all(dir.path(), &items);
         let mut foreign = make_result(
             "2002",
             "z.jpg",
@@ -1361,8 +1621,11 @@ mod tests {
             .record_confirmation
             .exclusions
             .iter()
-            .any(|exclusion| exclusion.tweet_id == "2002"
-                && exclusion.reason == ExclusionReason::UnpairedResult));
+            .any(|exclusion| {
+                exclusion.tweet_id == "2002"
+                    && exclusion.original_coverage == OriginalCoverage::Unknown
+                    && exclusion.reason == ExclusionReason::UnknownOriginalCoverage
+            }));
     }
 
     #[test]
@@ -1385,9 +1648,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(dir.path());
         fs::write(&paths.record_path, "1001\n1001\n1002\n").unwrap();
+        let items = [item("1002", "a.jpg"), item("1003", "b.jpg")];
+        observe_all(dir.path(), &items);
         let captured = capture(
             dir.path(),
-            &[item("1002", "a.jpg"), item("1003", "b.jpg")],
+            &items,
             vec![
                 result_ok(dir.path(), "1002", "a.jpg"),
                 result_ok(dir.path(), "1003", "b.jpg"),
@@ -1420,9 +1685,11 @@ mod tests {
     fn batch_reloads_after_process_restart_equivalent() {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(dir.path());
+        let items = [item("1001", "a.jpg")];
+        observe_all(dir.path(), &items);
         let captured = capture(
             dir.path(),
-            &[item("1001", "a.jpg")],
+            &items,
             vec![result_ok(dir.path(), "1001", "a.jpg")],
         );
         let batch_id = captured.record_confirmation.batch_id.clone().unwrap();
@@ -1446,6 +1713,8 @@ mod tests {
         let original = dir.path().join("sandbox").join("a.jpg");
         fs::create_dir_all(original.parent().unwrap()).unwrap();
         fs::write(&original, b"bytes").unwrap();
+        let items = [item("1001", "a.jpg")];
+        observe_all(dir.path(), &items);
         let captured = capture(
             dir.path(),
             &[item("1001", "a.jpg")],
@@ -1481,6 +1750,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(dir.path());
         fs::write(&paths.record_path, "1001\n").unwrap();
+        let items = [item("1001", "a.jpg"), item("1002", "b.jpg")];
+        observe_all(dir.path(), &items);
         let captured = capture(
             dir.path(),
             &[item("1001", "a.jpg"), item("1002", "b.jpg")],
@@ -1559,9 +1830,11 @@ mod tests {
     fn legacy_writer_and_commit_share_the_lock() {
         let dir = tempfile::tempdir().unwrap();
         let paths = paths_in(dir.path());
+        let items = [item("3000", "a.jpg"), item("3001", "b.jpg")];
+        observe_all(dir.path(), &items);
         let captured = capture(
             dir.path(),
-            &[item("3000", "a.jpg"), item("3001", "b.jpg")],
+            &items,
             vec![
                 result_ok(dir.path(), "3000", "a.jpg"),
                 result_ok(dir.path(), "3001", "b.jpg"),
@@ -1649,5 +1922,111 @@ mod tests {
         assert!(!paths.record_path.exists());
         let listed = query_download_record_batches(&paths, None).unwrap();
         assert!(listed.pending.is_empty());
+    }
+
+    #[test]
+    fn partial_and_unknown_coverage_cannot_be_committed() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let full = [item("1001", "a.jpg"), item("1001", "b.jpg")];
+        observe_all(dir.path(), &full);
+        let partial = capture(
+            dir.path(),
+            &[item("1001", "a.jpg")],
+            vec![result_ok(dir.path(), "1001", "a.jpg")],
+        );
+        assert!(partial.record_confirmation.candidates.is_empty());
+        assert_eq!(
+            partial.record_confirmation.exclusions[0].original_coverage,
+            OriginalCoverage::Partial
+        );
+        let batch_id = partial.record_confirmation.batch_id.unwrap();
+        let err = commit_download_record(&paths, &batch_id, &["1001".to_string()]).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(!paths.record_path.exists());
+
+        let unknown = capture(
+            dir.path(),
+            &[item("2001", "a.jpg")],
+            vec![result_ok(dir.path(), "2001", "a.jpg")],
+        );
+        assert_eq!(
+            unknown.record_confirmation.exclusions[0].original_coverage,
+            OriginalCoverage::Unknown
+        );
+        let unknown_id = unknown.record_confirmation.batch_id.unwrap();
+        assert!(commit_download_record(&paths, &unknown_id, &["2001".to_string()]).is_err());
+        assert!(!paths.record_path.exists());
+    }
+
+    #[test]
+    fn caller_complete_flag_does_not_create_a_manifest() {
+        let raw = r#"{"tweet_id":"1001","type":"image","url":"https://cdn.example.test/1001/a.jpg","suggested_filename":"a.jpg","complete":true}"#;
+        let parsed: MediaItem = serde_json::from_str(raw).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let captured = capture(
+            dir.path(),
+            &[parsed],
+            vec![result_ok(dir.path(), "1001", "a.jpg")],
+        );
+        assert_eq!(
+            captured.record_confirmation.exclusions[0].original_coverage,
+            OriginalCoverage::Unknown
+        );
+        assert!(!paths_in(dir.path())
+            .manifests_dir
+            .join("1001.json")
+            .exists());
+    }
+
+    #[test]
+    fn complete_manifest_reloads_and_commit_rechecks_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let items = [item("1001", "a.jpg"), item("1001", "b.jpg")];
+        observe_all(dir.path(), &items);
+        let manifest = fs::read_to_string(paths.manifests_dir.join("1001.json")).unwrap();
+        assert!(!manifest.contains("https://"));
+        assert!(manifest.contains("\"source\": \"test\""));
+        drop(manifest);
+
+        let reloaded = RecordPaths::from_record_path(paths.record_path.clone());
+        let captured = capture_download_batch(
+            &reloaded,
+            &items,
+            &output(vec![
+                result_ok(dir.path(), "1001", "a.jpg"),
+                result_ok(dir.path(), "1001", "b.jpg"),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(captured.record_confirmation.candidates.len(), 1);
+        assert_eq!(
+            captured.record_confirmation.candidates[0].original_coverage,
+            OriginalCoverage::Complete
+        );
+        let batch_id = captured.record_confirmation.batch_id.unwrap();
+        fs::remove_file(reloaded.manifests_dir.join("1001.json")).unwrap();
+        let err = commit_download_record(&reloaded, &batch_id, &["1001".to_string()]).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::InvalidArgument);
+        assert!(!reloaded.record_path.exists());
+    }
+
+    #[test]
+    fn later_larger_manifest_blocks_previously_complete_batch() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = paths_in(dir.path());
+        let first = [item("1001", "a.jpg")];
+        observe_all(dir.path(), &first);
+        let captured = capture(
+            dir.path(),
+            &first,
+            vec![result_ok(dir.path(), "1001", "a.jpg")],
+        );
+        assert_eq!(captured.record_confirmation.candidates.len(), 1);
+        let batch_id = captured.record_confirmation.batch_id.unwrap();
+        observe_all(dir.path(), &[item("1001", "a.jpg"), item("1001", "b.jpg")]);
+        assert!(commit_download_record(&paths, &batch_id, &["1001".to_string()]).is_err());
+        assert!(!paths.record_path.exists());
     }
 }

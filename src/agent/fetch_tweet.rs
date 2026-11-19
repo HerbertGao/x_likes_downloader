@@ -223,6 +223,7 @@ pub async fn fetch_tweet(req: FetchTweetRequest) -> Result<FetchTweetOutput, Err
 
     let config = Config::load()
         .map_err(|e| ErrorPayload::new(ErrorKind::InternalError, format!("加载配置失败: {}", e)))?;
+    let manifest_paths = crate::download_record::RecordPaths::from_config(&config);
 
     if !config.is_configured() {
         return Err(ErrorPayload::new(
@@ -272,6 +273,12 @@ pub async fn fetch_tweet(req: FetchTweetRequest) -> Result<FetchTweetOutput, Err
             "焦点推文无法解析为 TweetSummary",
         )
     })?;
+
+    let _ = crate::download_record::observe_tweets(
+        &manifest_paths,
+        "fetch_tweet",
+        std::slice::from_ref(&tweet),
+    );
 
     Ok(FetchTweetOutput {
         tweet,

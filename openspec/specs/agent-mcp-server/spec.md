@@ -247,7 +247,7 @@ MCP server 实现必须位于 `src/agent/mcp_server.rs`，仅在 `xld serve --mc
 
 ### 需求:MCP 下载记录两阶段确认
 
-`download_media` 成功返回后不得自动修改 `DOWNLOAD_RECORD`。它必须把本次下载事实写成可在进程重启后读回的本地批次，并在原有 `downloads` / `summary` 上追加 `record_confirmation`。成功候选的口径是 `supplied_items`：某个 tweet ID 只有在本次调用为它提交的每一个媒体项都是 `downloaded` 或 `skipped_existing` 时才可提交。任一失败、取消、缺失或无法配对的项使该推文不可提交。不得使用 legacy「任一媒体成功即记录整条推文」的规则。
+`download_media` 成功返回后不得自动修改 `DOWNLOAD_RECORD`。它必须把本次下载事实写成可在进程重启后读回的本地批次，并在原有 `downloads` / `summary` 上追加 `record_confirmation`。整帖候选的 `original_coverage` 只能是 `complete`：服务端在 `list_likes` / `fetch_tweet` / `user_tweets` 中观察到并落盘的媒体清单，必须被本次成功下载全部覆盖。`partial` 与 `unknown` 不得进入候选，也不得被 `commit_download_record` 写入。不得接受调用方的 `complete:true`。提交时必须再次读取清单核对。不得使用 legacy「任一媒体成功即记录整条推文」的规则。
 
 `commit_download_record` 只接受该批次的成功候选。候选之外的 ID、非法 `batch_id` 或空的 `tweet_ids` 必须拒绝整次写入。已存在的 ID 必须跳过且不产生重复行。提交不得访问网络，也不得因为下载路径上的文件后来被移走而拒绝。`get_download_record_batch` 在省略 `batch_id` 时只列出仍待确认的批次，提供 `batch_id` 时返回该批次；二者都不写记录。
 

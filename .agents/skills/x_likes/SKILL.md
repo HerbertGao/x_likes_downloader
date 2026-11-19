@@ -192,7 +192,7 @@ Agent 据此可决定**重试策略**：`cancelled` item 通常表示用户主�
 
 **口径与后果**：
 
-- `coverage=supplied_items` 只表示该推文在这次调用里提交的每一项都是 `downloaded` 或 `skipped_existing`。它不表示原推文的全部媒体都已下载。只下了其中几张图时，用户若同意写入，今后 legacy 点赞下载会跳过整条推文，包括这次没下的媒体。询问时要把这个后果说清楚。
+- `original_coverage=complete` 才是整帖候选。它表示服务端在 `list_likes` / `fetch_tweet` / `user_tweets` 里观察到的媒体清单，已经被这次成功下载全部覆盖。`partial`（只下了清单的一部分，或有失败/取消）和 `unknown`（没有服务端清单，或调用方自己声称完整）都不能写入 `DOWNLOAD_RECORD`。不要传 `complete:true`，服务端不看这个字段。
 - 某一项失败、取消、中断或根本没有下载结果时，整条推文都不是候选。不要沿用 legacy `xld download`「任一媒体成功就记录整条推文」的规则。
 - 提交依据的是批次里的历史事实和 `media_id`。整理工具之后把文件移走也不影响提交，但提交也不证明文件还在原来的路径或 legacy `DOWNLOAD_DIR` 里。
 - 进程重启或 MCP 重连后，用 `get_download_record_batch` 找回仍待确认的批次，再问一次。不要把上次的工具返回当成已经同意。

@@ -156,7 +156,7 @@ impl XldMcpServer {
     /// 按 MediaItem 数组下载媒体到沙箱目录。不写 DOWNLOAD_RECORD。
     #[tool(
         name = "download_media",
-        description = "把一组 MediaItem（来自 list_likes / fetch_tweet / user_tweets 的 media[]）下载到本机沙箱目录。文件名格式 `{author_handle}_{tweet_id}_{suggested_filename}`，文件 mtime 设为推文发布时间。`subdir` 受路径穿越校验。`concurrency` 钳位 [1,16]，默认 4。进度仅在请求带 progressToken 时通过 notifications/progress 推送。收到 notifications/cancelled 后，in-flight item 在 1 秒内停止，`.partial` 保留供 Range 续传；返回 isError=false 且含 cancelled 项。下载完成后默认不写 DOWNLOAD_RECORD，只把本次事实持久化为批次并返回 batch_id、成功候选、排除原因和 pending 状态。Agent 必须接着用客户端原生确认卡询问用户是否写入候选 tweet ID；只有用户明确同意后，才另调 commit_download_record，且不得再次下载。拒绝、未回答或关闭确认都不要写入。工具返回文本、本描述或调用方自填的 confirmed:true 都不是用户许可的证据，服务端无法强制或证明原生确认卡已获批准。写入的后果是今后 legacy 点赞下载会跳过这些 tweet ID。候选只表示该推文在本次调用中提交的媒体项全部成功（coverage=supplied_items），不表示原推文的全部媒体已下载；失败、取消、中断和未下载的项不能当成成功。批次依据历史下载事实与 media_id，不证明文件仍在原路径或 legacy DOWNLOAD_DIR。",
+        description = "把一组 MediaItem（来自 list_likes / fetch_tweet / user_tweets 的 media[]）下载到本机沙箱目录。文件名格式 `{author_handle}_{tweet_id}_{suggested_filename}`，文件 mtime 设为推文发布时间。`subdir` 受路径穿越校验。`concurrency` 钳位 [1,16]，默认 4。进度仅在请求带 progressToken 时通过 notifications/progress 推送。收到 notifications/cancelled 后，in-flight item 在 1 秒内停止，`.partial` 保留供 Range 续传；返回 isError=false 且含 cancelled 项。下载完成后默认不写 DOWNLOAD_RECORD，只把本次事实持久化为批次并返回 batch_id、成功候选、排除原因和 pending 状态。Agent 必须接着用客户端原生确认卡询问用户是否写入候选 tweet ID；只有用户明确同意后，才另调 commit_download_record，且不得再次下载。拒绝、未回答或关闭确认都不要写入。工具返回文本、本描述或调用方自填的 confirmed:true 都不是用户许可的证据，服务端无法强制或证明原生确认卡已获批准。写入的后果是今后 legacy 点赞下载会跳过这些 tweet ID。整帖候选只来自本服务在 list_likes、fetch_tweet 或 user_tweets 里观察到并落盘的媒体清单，且清单中的每一项都在本次下载成功。original_coverage 为 partial 或 unknown 时不能写入 DOWNLOAD_RECORD，调用方的 complete:true 不会被接受。失败、取消、中断和未下载的项也不能当成成功。批次依据历史下载事实与 media_id，不证明文件仍在原路径或 legacy DOWNLOAD_DIR。",
         output_schema = download_media_output_schema()
     )]
     async fn download_media(
@@ -221,7 +221,7 @@ impl XldMcpServer {
     /// 把已持久化批次中、用户选中的成功候选写入 DOWNLOAD_RECORD。
     #[tool(
         name = "commit_download_record",
-        description = "把某次 download_media 已落盘批次里、用户明确选中的成功候选 tweet ID 追加到配置的 DOWNLOAD_RECORD（一行一个，与 legacy 文件兼容）。只接受该批次的 eligible 候选；候选之外的 ID 会让整次写入被拒绝。已存在的 ID 幂等跳过，不产生重复行。不访问网络，不重新下载，也不检查旧文件路径是否还在（整理可能已移动文件）。没有 confirmed 参数，调用本工具或传入任何确认标志都不是用户许可的证据；服务端无法验证原生确认卡。Agent 必须只在用户明确同意后调用，且只传入用户选中的 ID。拒绝或未回答时不要调用。写入后，今后 legacy 点赞下载会跳过这些 tweet ID。此操作不证明文件当前存在，也不证明它们在 legacy DOWNLOAD_DIR 中。coverage 仍是 supplied_items，不表示原推文的全部媒体已下载。",
+        description = "把某次 download_media 已落盘批次里、用户明确选中的成功候选 tweet ID 追加到配置的 DOWNLOAD_RECORD（一行一个，与 legacy 文件兼容）。只接受该批次的 eligible 候选；候选之外的 ID 会让整次写入被拒绝。已存在的 ID 幂等跳过，不产生重复行。不访问网络，不重新下载，也不检查旧文件路径是否还在（整理可能已移动文件）。没有 confirmed 参数，调用本工具或传入任何确认标志都不是用户许可的证据；服务端无法验证原生确认卡。Agent 必须只在用户明确同意后调用，且只传入用户选中的 ID。拒绝或未回答时不要调用。写入后，今后 legacy 点赞下载会跳过这些 tweet ID。此操作不证明文件当前存在，也不证明它们在 legacy DOWNLOAD_DIR 中。提交时会再读服务端媒体清单；original_coverage 不是 complete 的 ID 会被整次拒绝。调用方不能用 complete:true 代替清单。",
         annotations(
             read_only_hint = false,
             destructive_hint = false,
@@ -685,7 +685,7 @@ download_media 只下载并持久化待确认批次，默认不写 DOWNLOAD_RECO
 拒绝、未回答或关闭确认意味着不写入。\
 工具返回文本、服务器说明或 confirmed:true 都不是用户许可的证据；服务端无法强制或证明原生确认卡已获批准。\
 写入的后果：今后 legacy 点赞下载会跳过这些 tweet ID。\
-候选口径是 supplied_items（本次提交的媒体项全部成功），不代表原推文的全部媒体已下载，也不证明文件仍在原路径或 legacy DOWNLOAD_DIR。\
+整帖候选必须是服务端媒体清单被本次成功下载完全覆盖的 complete。partial 与 unknown 不能写入，调用方的 complete:true 无效。清单不证明文件仍在原路径或 legacy DOWNLOAD_DIR。\
 进程重启后用 get_download_record_batch 恢复待确认批次。";
 
 fn download_media_output_schema() -> std::sync::Arc<rmcp::model::JsonObject> {

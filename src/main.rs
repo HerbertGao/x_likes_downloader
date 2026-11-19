@@ -669,12 +669,18 @@ async fn run_download_legacy() -> Result<()> {
             tweets_all_failed.insert(r.tweet_id.clone());
         }
     }
-    // 记录每条任一媒体成功的 tweet。写入在锁内重读去重，避免并发追加出重复行。
+    // 记录每条任一媒体成功的 tweet。一次锁内重写，避免 N 次全文件替换。
     for tid in &succeeded_tweets {
         tweets_all_failed.remove(tid);
-        if !known_ids.contains(tid) {
-            append_downloaded_id(&config.download_record, tid)?;
-        }
+    }
+    let mut to_record: Vec<String> = succeeded_tweets
+        .iter()
+        .filter(|tid| !known_ids.contains(*tid))
+        .cloned()
+        .collect();
+    to_record.sort();
+    if !to_record.is_empty() {
+        append_downloaded_ids(&config.download_record, &to_record)?;
     }
 
     println!("\n=== 处理总结 ===");
@@ -706,11 +712,8 @@ fn load_downloaded_ids(filename: &str) -> std::collections::HashSet<String> {
         .unwrap_or_default()
 }
 
-fn append_downloaded_id(filename: &str, tweet_id: &str) -> Result<()> {
-    x_likes_downloader::download_record::append_new_ids(
-        std::path::Path::new(filename),
-        &[tweet_id.to_string()],
-    )
-    .map_err(|err| anyhow::anyhow!(err.message))?;
+fn append_downloaded_ids(filename: &str, tweet_ids: &[String]) -> Result<()> {
+    x_likes_downloader::download_record::append_new_ids(std::path::Path::new(filename), tweet_ids)
+        .map_err(|err| anyhow::anyhow!(err.message))?;
     Ok(())
 }
