@@ -342,7 +342,7 @@ async fn mcp_record_tools_do_not_write_on_refusal_or_invalid_id() {
         .await
         .unwrap();
     stdin
-        .write_all(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"commit_download_record","arguments":{"batch_id":"../etc/passwd","tweet_ids":["1"]}}}"#)
+        .write_all(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"commit_download_record","arguments":{"batch_id":"../outside/batch.json","tweet_ids":["1"]}}}"#)
         .await
         .unwrap();
     stdin.write_all(b"\n").await.unwrap();

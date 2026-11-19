@@ -1496,7 +1496,7 @@ mod tests {
         );
         let batch_id = captured.record_confirmation.batch_id.unwrap();
         let before = fs::read_to_string(&paths.record_path).unwrap();
-        for bad in ["../etc/passwd", "..", "not-a-batch", "ABCDEF", ""] {
+        for bad in ["../outside/batch.json", "..", "not-a-batch", "ABCDEF", ""] {
             let err = commit_download_record(&paths, bad, &["1001".to_string()]).unwrap_err();
             assert_eq!(err.kind, ErrorKind::InvalidArgument, "{bad}");
         }
@@ -1504,9 +1504,9 @@ mod tests {
         assert!(commit_download_record(&paths, &batch_id, &["1002".to_string()]).is_err());
         assert!(commit_download_record(&paths, &batch_id, &["4040".to_string()]).is_err());
         assert!(commit_download_record(&paths, &batch_id, &["1001\n1009".to_string()]).is_err());
-        assert!(query_download_record_batches(&paths, Some("../etc/passwd")).is_err());
+        assert!(query_download_record_batches(&paths, Some("../outside/batch.json")).is_err());
         assert_eq!(fs::read_to_string(&paths.record_path).unwrap(), before);
-        assert!(!dir.path().join("etc").exists());
+        assert!(!dir.path().join("outside").exists());
     }
 
     #[test]
