@@ -144,15 +144,27 @@ fn parse_lookup(status: u16, resp: &Value, username: &str) -> Result<UserBrief, 
     })
 }
 
+/// 该页是否含解析器真正可用的数据。
+///
+/// 不能只看 `data` 非 null，也不能只看 timeline 节点存在：`Value::get` 对 JSON `null`
+/// 返回 `Some`，`timeline: null` / `instructions: null` 都会被误判为可用。判据必须是
+/// **timeline 节点存在且 `instructions` 为非空数组**（真实页至少有一条 instruction）。
+/// 最后一页合法地可能没有 tweet entry，但 `TimelineAddEntries` 仍在。
+fn timeline_usable(resp: &Value) -> bool {
+    find_outer_timeline(resp)
+        .and_then(|outer| outer.get("timeline"))
+        .and_then(|t| t.get("instructions"))
+        .and_then(|i| i.as_array())
+        .map(|instructions| !instructions.is_empty())
+        .unwrap_or(false)
+}
+
 /// 解析一页 UserTweets 响应：任何页面级错误都必须 `Err`，不得让调用方把前几页当成完整结果。
 fn parse_timeline_page(
     status: u16,
     resp: &Value,
 ) -> Result<(Vec<Value>, Option<String>), ErrorPayload> {
-    // 该页「可用」的判据是 timeline 节点存在，而不是 data 非 null：
-    // 最后一页合法地可能没有任何 tweet entry，但 timeline 节点仍在。
-    let data_usable = find_outer_timeline(resp).is_some();
-    ensure_response_ok(status, resp, "UserTweets", data_usable)?;
+    ensure_response_ok(status, resp, "UserTweets", timeline_usable(resp))?;
     Ok(parse_likes_response(resp))
 }
 
@@ -491,6 +503,37 @@ mod tests {
     }
 
     #[test]
+    fn timeline_null_with_errors_is_err() {
+        // Value::get 对 JSON null 返回 Some；timeline: null 不是可用数据
+        let resp = json!({
+            "data": {"user": {"result": {"timeline": null}}},
+            "errors": [{"message": "Internal server error"}]
+        });
+        let err = parse_timeline_page(200u16, &resp).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NetworkError);
+    }
+
+    #[test]
+    fn timeline_instructions_null_with_errors_is_err() {
+        let resp = json!({
+            "data": {"user": {"result": {"timeline": {"timeline": {"instructions": null}}}}},
+            "errors": [{"message": "Internal server error"}]
+        });
+        let err = parse_timeline_page(200u16, &resp).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NetworkError);
+    }
+
+    #[test]
+    fn timeline_empty_instructions_with_errors_is_err() {
+        let resp = json!({
+            "data": {"user": {"result": {"timeline": {"timeline": {"instructions": []}}}}},
+            "errors": [{"message": "Internal server error"}]
+        });
+        let err = parse_timeline_page(200u16, &resp).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::NetworkError);
+    }
+
+    #[test]
     fn timeline_usable_data_with_warnings_is_tolerated() {
         // 有 timeline 节点 + 非致命 errors：保留可用内容
         let resp = page(vec![tweet_entry("1700000000000031002")], None);
@@ -644,6 +687,37 @@ mod tests {
         assert!(
             matches!(result, Err(ref e) if e.kind == ErrorKind::NetworkError),
             "page-2 empty-data-with-errors must fail the whole request, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn collect_pages_null_timeline_with_errors_after_one_page_is_err() {
+        let mut pages = VecDeque::from(vec![
+            Ok((
+                200u16,
+                page(vec![tweet_entry("1700000000000031002")], Some("C1")),
+            )),
+            Ok((
+                200u16,
+                json!({
+                    "data": {"user": {"result": {"timeline": null}}},
+                    "errors": [{"message": "Internal server error"}]
+                }),
+            )),
+        ]);
+        let result = collect_pages(
+            move |_| {
+                let p = pages.pop_front().expect("two pages");
+                Box::pin(async move { p }) as PageFuture
+            },
+            true,
+            None,
+            false,
+        )
+        .await;
+        assert!(
+            matches!(result, Err(ref e) if e.kind == ErrorKind::NetworkError),
+            "page-2 null-timeline-with-errors must fail the whole request, got {result:?}"
         );
     }
 

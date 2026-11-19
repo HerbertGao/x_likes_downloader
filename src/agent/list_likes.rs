@@ -189,7 +189,11 @@ pub(crate) fn find_outer_timeline(data: &Value) -> Option<&Value> {
         .get("data")
         .and_then(|d| d.get("user"))
         .and_then(|u| u.get("result"))?;
-    result.get("timeline_v2").or_else(|| result.get("timeline"))
+    // present-but-null 视为缺失：否则 `timeline_v2: null` 会遮蔽有效的 `timeline`。
+    result
+        .get("timeline_v2")
+        .filter(|v| !v.is_null())
+        .or_else(|| result.get("timeline"))
 }
 
 /// Parse the GraphQL Likes response, returning (tweet entries, next cursor).
@@ -635,6 +639,19 @@ mod tests {
             .as_ref()
             .expect("include_raw=true 时应含 all_variants");
         assert_eq!(vars.len(), 2);
+    }
+
+    /// `timeline_v2: null` 必须视为缺失，回退到有效的 `timeline`（present-but-null ≠ 存在）。
+    #[test]
+    fn find_outer_timeline_skips_null_timeline_v2() {
+        let resp = json!({
+            "data": { "user": { "result": {
+                "timeline_v2": null,
+                "timeline": { "timeline": { "instructions": [] } }
+            } } }
+        });
+        let outer = find_outer_timeline(&resp).expect("必须回退到 timeline");
+        assert!(outer.get("timeline").is_some());
     }
 
     /// X 当前 schema 把外层节点叫 `timeline`（不带 _v2）。
