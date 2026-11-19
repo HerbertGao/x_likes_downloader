@@ -191,7 +191,7 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 - **协议端点刷新（2026-11 实测）**：defaults.json 的 Likes / TweetDetail queryId 更新为当前线上值（旧值仍可用但已非现役）；`XApi` 抽出 `graphql_get` 公共机械（TweetDetail / UserByScreenName / UserTweets 共用鉴权与错误分类）。
 - 协议配置新增 `USER_TWEETS_API_URL` / `USER_BY_SCREEN_NAME_API_URL` 等 6 个字段（env > private_tokens > defaults.json 四层解析，同既有约定）。
 
-- **版本 2026.11.1**。
+- **版本 2026.11.2**。
 
 > 提示：仓库外 `x-organize` skill 的 `~/.config/x_organize/creds.json` 里记录的是旧 UserByScreenName queryId（实测仍可用，现役为 `AMIBMjtxEEATh4z8V9GtRg`）；该文件属用户侧数据，本仓库不代改。
 
@@ -207,7 +207,7 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 - **两阶段错误分类**：HTTP 200 + GraphQL `errors[code:32]` 识别为 `auth_expired`；端点过期 `endpoint_stale` / 推文不可见 `tweet_unavailable` / 网络 `network_error` 各归其类；非 JSON body 容错不误判。
 - **网络健壮性**：TweetDetail 请求 30s 超时；构造期失败归 `internal_error`、传输期归 `network_error`，不再一刀切 network。
 - **兼容老推文**：覆盖 `TweetWithVisibilityResults` wrapper；焦点定位含 `rest_id` 软兜底。
-- **版本 2026.11.1**。
+- **版本 2026.11.2**。
 
 不变：CLI 既有行为、`download_media` 沙箱/续传/取消、各 host packaging 结构、凭据本地化。
 </details>
