@@ -61,7 +61,9 @@ x_likes_downloader organize    # （可选）按用户名分文件夹整理
 
 > "看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
 
-Agent 能用的 6 个工具：`list_likes`（列点赞）、`download_media`（下载）、`fetch_tweet`（按 URL/id 抓任意推文）、`user_tweets`（按 username 列任意账号的推文）、`auth_status`（检查凭据）、`setup_from_curl`（导入凭据）。下载进度实时反馈，大文件可中断、可断点续传。
+Agent 能用的 8 个工具：`list_likes`（列点赞）、`download_media`（下载）、`commit_download_record`（用户明确同意后才把选中的 tweet ID 写入下载记录）、`get_download_record_batch`（重连后查看待确认批次）、`fetch_tweet`（按 URL/id 抓任意推文）、`user_tweets`（按 username 列任意账号的推文）、`auth_status`（检查凭据）、`setup_from_curl`（导入凭据）。下载进度实时反馈，大文件可中断、可断点续传。
+
+MCP 的 `download_media` 默认不写 `DOWNLOAD_RECORD`。下载结束后 Agent 要用客户端自己的确认卡询问用户；只有用户同意，才调用单独的提交工具，并且不会重新下载。拒绝或没有回答就不会写入。工具返回的文字不能代替这次确认。写入后，以后用命令行的 `download` 下载点赞时会跳过这些 tweet ID。这里记录的是「这次提交的媒体都下完了」，不是「原推文的全部媒体都下完了」。命令行的一键 `download` 仍按原有规则自动记下载记录。
 
 skill 走**双路径**：客户端已注册 MCP server 时用 MCP 工具（有进度通知、下载可取消）；没注册则自动回落 `x_likes_downloader ... --json` 命令行，功能等价。
 
@@ -105,6 +107,7 @@ npx skills add HerbertGao/x_likes_downloader -g -a claude-code
 COUNT=50                     # 每次获取的推文数量
 ALL=true                     # 是否下载全部点赞推文
 DOWNLOAD_DIR=data/downloads  # 下载目录
+DOWNLOAD_RECORD=data/downloaded_tweet_ids.txt  # 一行一个 tweet ID。命令行 download 会自动追加；MCP 下载默认不写
 FILE_FORMAT={USERNAME}_{ID}  # 文件命名格式
 AUTO_ORGANIZE=true           # 下载后自动整理
 TARGET_DIR=data/organized    # 整理目标目录

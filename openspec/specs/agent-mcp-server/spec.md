@@ -25,25 +25,27 @@
 - **当** stdin 关闭（client 关闭 pipe）
 - **那么** server 必须优雅关闭（释放 in-flight 请求 / 清理临时状态），进程以退出码 0 退出
 
-### 需求:tools/list 暴露 6 个工具
+### 需求:tools/list 暴露 8 个工具
 
-`xld serve --mcp` 必须在响应 MCP `tools/list` 请求时返回且仅返回以下 6 个工具（本次变更由 5 个扩为 6 个，新增 `user_tweets`），每个工具必须包含名称、中文描述、JSON Schema 形式的输入参数：
+`xld serve --mcp` 必须在响应 MCP `tools/list` 请求时返回且仅返回以下 8 个工具，每个工具必须包含名称、中文描述、JSON Schema 形式的输入参数：
 
 - `list_likes`：拉取当前账号的点赞推文列表
-- `download_media`：按一组 MediaItem 下载媒体到沙箱目录
+- `download_media`：按一组 MediaItem 下载媒体到沙箱目录。描述必须说明默认不写 `DOWNLOAD_RECORD`、成功后要由 Agent 用原生确认卡询问，以及工具返回文本或 `confirmed:true` 不是用户许可
+- `commit_download_record`：在用户明确同意后，把已持久化批次中的选中 tweet ID 写入 `DOWNLOAD_RECORD`。没有 `confirmed` 入参
+- `get_download_record_batch`：查询仍待确认的批次，或按 `batch_id` 取回一个批次。不写记录
 - `auth_status`：探测当前凭据是否仍可访问 X Likes 端点
 - `setup_from_curl`：从 cURL 文本导入凭据 + 协议参数
 - `fetch_tweet`：按 URL 或 tweet_id 抓取任意一条推文的媒体元数据，返回与 `list_likes` 同构的 TweetSummary
 - `user_tweets`：按 username（允许前导 `@`）列出指定账号的推文列表，返回 `user{screen_name, rest_id, name}` + 与 `list_likes` 同构的 `tweets[]` + `cursor` 增量游标；描述必须注明 X 端单页约 20 条、分页以 `cursor` 为准、不含置顶推文（`TimelinePinEntry`）与会话折叠线程
 
-工具的 JSON Schema 必须由对应 Rust 请求类型自动派生（`schemars` crate），保证类型定义与 schema 一致。`fetch_tweet` 的输入类型 `FetchTweetRequest` 与 `user_tweets` 的输入类型 `UserTweetsRequest` 均与现有 MCP 请求类型组织方式一致。
+工具的 JSON Schema 必须由对应 Rust 请求类型自动派生（`schemars` crate），保证类型定义与 schema 一致。`fetch_tweet` 的输入类型 `FetchTweetRequest` 与 `user_tweets` 的输入类型 `UserTweetsRequest` 均与现有 MCP 请求类型组织方式一致。`download_media`、`commit_download_record`、`get_download_record_batch` 还必须提供对象根类型的 `outputSchema`；成功的 `CallToolResult` 同时包含与该对象等价的 JSON 文本。
 
-`tools/list` 必须**不**包含：`organize`、旧 `xld download` 一把梭、任何下载之外的写操作工具。
+`tools/list` 必须**不**包含：`organize`、旧 `xld download` 一把梭。除 `commit_download_record` 对既有 `DOWNLOAD_RECORD` 的追加外，不得暴露其它写操作工具。
 
 #### 场景:工具列表完整
 
 - **当** MCP 客户端发送 `tools/list` 请求
-- **那么** 响应必须含 6 个工具且工具名集合等于 `{list_likes, download_media, auth_status, setup_from_curl, fetch_tweet, user_tweets}`
+- **那么** 响应必须含 8 个工具且工具名集合等于 `{list_likes, download_media, commit_download_record, get_download_record_batch, auth_status, setup_from_curl, fetch_tweet, user_tweets}`
 
 #### 场景:每个工具有 schema
 
@@ -242,3 +244,25 @@ MCP server 实现必须位于 `src/agent/mcp_server.rs`，仅在 `xld serve --mc
 #### 场景:人类 CLI 调用栈不含 mcp_server
 - **当** 用户运行 `xld likes list --json`
 - **那么** 该子命令的执行路径必须直接调用 `agent::list_likes` lib 函数，不得经过 `mcp_server::*`
+
+### 需求:MCP 下载记录两阶段确认
+
+`download_media` 成功返回后不得自动修改 `DOWNLOAD_RECORD`。它必须把本次下载事实写成可在进程重启后读回的本地批次，并在原有 `downloads` / `summary` 上追加 `record_confirmation`。成功候选的口径是 `supplied_items`：某个 tweet ID 只有在本次调用为它提交的每一个媒体项都是 `downloaded` 或 `skipped_existing` 时才可提交。任一失败、取消、缺失或无法配对的项使该推文不可提交。不得使用 legacy「任一媒体成功即记录整条推文」的规则。
+
+`commit_download_record` 只接受该批次的成功候选。候选之外的 ID、非法 `batch_id` 或空的 `tweet_ids` 必须拒绝整次写入。已存在的 ID 必须跳过且不产生重复行。提交不得访问网络，也不得因为下载路径上的文件后来被移走而拒绝。`get_download_record_batch` 在省略 `batch_id` 时只列出仍待确认的批次，提供 `batch_id` 时返回该批次；二者都不写记录。
+
+所有相关写入（含 legacy `xld download`）必须在本地独占锁内重读记录文件并去重后，用同目录临时文件加 rename 替换，避免重试丢行或重复行。批次文件不得保存推文正文、凭据或媒体 URL。`batch_id` 只允许 32 位小写十六进制。
+
+服务端不得提供或检查 `confirmed` 参数。响应里的说明文字不是用户许可。
+
+#### 场景:下载默认不写记录
+- **当** MCP `download_media` 返回且存在成功项
+- **那么** `DOWNLOAD_RECORD` 保持不变，响应含 `batch_id`、候选、排除项，且 `user_permission_verified` 为 false
+
+#### 场景:只提交选中的候选
+- **当** 用户只同意候选中的一部分，Agent 调用 `commit_download_record`
+- **那么** 记录文件只新增这部分 ID；其余候选仍可再次提交；重复调用不增加重复行
+
+#### 场景:非法 ID 不写入
+- **当** `tweet_ids` 含有该批次排除项、未知 ID，或 `batch_id` 含路径成分
+- **那么** 记录文件不变，返回 `invalid_argument`

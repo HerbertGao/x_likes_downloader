@@ -156,7 +156,7 @@ impl Default for DownloadOpts {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DownloadStatus {
     Downloaded,
@@ -167,7 +167,7 @@ pub enum DownloadStatus {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DownloadResult {
     pub tweet_id: String,
     pub url: String,
@@ -178,13 +178,13 @@ pub struct DownloadResult {
     pub error: Option<DownloadError>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DownloadError {
     pub kind: crate::error::ErrorKind,
     pub message: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct DownloadSummary {
     pub total: usize,
     pub downloaded: usize,

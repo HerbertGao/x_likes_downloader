@@ -22,6 +22,8 @@ const BINARY_PATH: &str = env!("CARGO_BIN_EXE_x_likes_downloader");
 const EXPECTED_TOOLS: &[&str] = &[
     "list_likes",
     "download_media",
+    "commit_download_record",
+    "get_download_record_batch",
     "auth_status",
     "setup_from_curl",
     "fetch_tweet",
@@ -83,6 +85,13 @@ async fn mcp_server_handshake_and_tools_list() {
     assert!(
         init_json.get("result").is_some(),
         "initialize must succeed; got: {init_json:?}"
+    );
+    let instructions = init_json["result"]["instructions"]
+        .as_str()
+        .expect("server instructions");
+    assert!(
+        instructions.contains("DOWNLOAD_RECORD") && instructions.contains("原生确认卡"),
+        "instructions must describe the two-stage record workflow: {instructions}"
     );
 
     // serverInfo 必须是本 crate 而不是 rmcp 默认值（防止 from_build_env 拿到 rmcp 自己的 name）
@@ -159,6 +168,29 @@ async fn mcp_server_handshake_and_tools_list() {
             "tool '{name}' missing description"
         );
     }
+
+    let by_name = |name: &str| {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name}"))
+    };
+    let download_desc = by_name("download_media")["description"].as_str().unwrap();
+    assert!(download_desc.contains("DOWNLOAD_RECORD"));
+    assert!(download_desc.contains("commit_download_record"));
+    assert!(download_desc.contains("confirmed:true"));
+    assert!(by_name("download_media").get("outputSchema").is_some());
+    let commit_desc = by_name("commit_download_record")["description"]
+        .as_str()
+        .unwrap();
+    assert!(commit_desc.contains("不重新下载") || commit_desc.contains("不访问网络"));
+    assert!(commit_desc.contains("confirmed"));
+    assert!(by_name("commit_download_record")
+        .get("outputSchema")
+        .is_some());
+    assert!(by_name("get_download_record_batch")
+        .get("outputSchema")
+        .is_some());
 
     // tools/call user_tweets：非法 username 走免凭据免网络的 hermetic 错误路径，
     // 钉住新工具的 rmcp 参数反序列化（Parameters<UserTweetsRequest>）与业务错误信封 wiring。
@@ -276,4 +308,91 @@ async fn mcp_server_handles_cancellation_for_unknown_request() {
         .unwrap()
         .unwrap();
     assert!(exit_status.success());
+}
+
+/// 非法 batch_id 与空的待确认列表都不得创建 DOWNLOAD_RECORD。全程使用临时目录。
+#[tokio::test(flavor = "multi_thread")]
+async fn mcp_record_tools_do_not_write_on_refusal_or_invalid_id() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let record = dir.path().join("downloaded_tweet_ids.txt");
+    let credentials = dir.path().join("no-such-tokens.env");
+    let mut child = Command::new(BINARY_PATH)
+        .args(["serve", "--mcp"])
+        .env("DOWNLOAD_RECORD", &record)
+        .env("XLD_CREDENTIALS_FILE", &credentials)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn");
+    let mut stdin = child.stdin.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    let mut reader = BufReader::new(stdout).lines();
+
+    stdin
+        .write_all(format!("{}\n", jsonrpc_initialize()).as_bytes())
+        .await
+        .unwrap();
+    let _ = timeout(Duration::from_secs(5), reader.next_line())
+        .await
+        .unwrap()
+        .unwrap();
+    stdin
+        .write_all(format!("{}\n", jsonrpc_initialized_notification()).as_bytes())
+        .await
+        .unwrap();
+    stdin
+        .write_all(br#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"commit_download_record","arguments":{"batch_id":"../etc/passwd","tweet_ids":["1"]}}}"#)
+        .await
+        .unwrap();
+    stdin.write_all(b"\n").await.unwrap();
+    let commit_response = next_response(&mut reader, 7).await;
+    assert!(commit_response["result"]["isError"]
+        .as_bool()
+        .unwrap_or(false));
+    let text = commit_response["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(text.contains("invalid_argument"), "{text}");
+
+    stdin
+        .write_all(br#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"get_download_record_batch","arguments":{}}}"#)
+        .await
+        .unwrap();
+    stdin.write_all(b"\n").await.unwrap();
+    let listed = next_response(&mut reader, 8).await;
+    assert!(
+        !listed["result"]["isError"].as_bool().unwrap_or(false),
+        "{listed:?}"
+    );
+    let listed_text = listed["result"]["content"][0]["text"].as_str().unwrap();
+    let listed_json: Value = serde_json::from_str(listed_text).unwrap();
+    assert_eq!(listed_json["pending"].as_array().unwrap().len(), 0);
+    assert_eq!(listed_json["user_permission_verified"], false);
+    assert!(listed["result"]["structuredContent"].is_object());
+    assert!(!record.exists());
+
+    drop(stdin);
+    let status = timeout(Duration::from_secs(5), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(status.success());
+}
+
+async fn next_response(
+    reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
+    id: u64,
+) -> Value {
+    loop {
+        let line = timeout(Duration::from_secs(5), reader.next_line())
+            .await
+            .expect("response timeout")
+            .expect("read response")
+            .expect("response line");
+        let value: Value = serde_json::from_str(&line).expect("json");
+        if value.get("id") == Some(&Value::from(id)) {
+            return value;
+        }
+    }
 }

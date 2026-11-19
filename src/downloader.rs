@@ -47,18 +47,16 @@ impl Downloader {
     }
 
     pub fn save_downloaded_id(&mut self, tweet_id: &str) -> Result<()> {
-        if let Some(parent) = Path::new(&self.config.download_record).parent() {
-            fs::create_dir_all(parent)?;
+        let stats = crate::download_record::append_new_ids(
+            Path::new(&self.config.download_record),
+            &[tweet_id.to_string()],
+        )
+        .map_err(|err| anyhow::anyhow!(err.message))?;
+        if stats.written.iter().any(|id| id == tweet_id)
+            || stats.already_present.iter().any(|id| id == tweet_id)
+        {
+            self.downloaded_ids.insert(tweet_id.to_string());
         }
-
-        use std::io::Write;
-        fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.config.download_record)?
-            .write_all(format!("{}\n", tweet_id).as_bytes())?;
-
-        self.downloaded_ids.insert(tweet_id.to_string());
         Ok(())
     }
 
