@@ -15,6 +15,9 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      - name: release 计划离线测试
+        run: bash scripts/release_plan_test.sh
+
       - name: 安装 Rust
         uses: dtolnay/rust-toolchain@stable
         with:
