@@ -60,9 +60,11 @@ jobs:
             echo "::error::invalid version '$RAW' (want N.N.N)"
             exit 1
           fi
-          echo "version=$ver" >> "$GITHUB_OUTPUT"
-          echo "tag=v$ver" >> "$GITHUB_OUTPUT"
-          echo "branch=release/v$ver" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$ver"
+            echo "tag=v$ver"
+            echo "branch=release/v$ver"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 拒绝已存在的 tag
         env:
@@ -234,8 +236,10 @@ jobs:
             exit 1
           fi
 
-          echo "should_release=$should" >> "$GITHUB_OUTPUT"
-          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          {
+            echo "should_release=$should"
+            echo "version=$ver"
+          } >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # 3) 质量门禁（仅真正发版时跑）
