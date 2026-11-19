@@ -67,6 +67,45 @@ pub struct FetchTweetOutput {
     pub schema_version: u32,
 }
 
+/// `user_tweets` 的请求参数（MCP 工具输入与 CLI 共用）。
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct UserTweetsRequest {
+    /// 目标账号 username（screen_name，允许带前导 `@`，长度 1–15，`[A-Za-z0-9_]`）。
+    pub username: String,
+    /// 拉取全部可见推文（按游标翻页直至无更多数据）。默认 false（仅首页）。
+    #[serde(default)]
+    pub all: bool,
+    /// 从指定游标继续拉取（用于增量同步）。
+    #[serde(default)]
+    pub since_cursor: Option<String>,
+    /// 单页条数。默认沿用配置值（通常 20）。
+    #[serde(default)]
+    pub count: Option<u32>,
+    /// 同时返回原始 GraphQL entry。**显著增加 token 成本**，仅供调试。
+    #[serde(default)]
+    pub include_raw: bool,
+}
+
+/// 目标账号摘要（来自 UserByScreenName）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserBrief {
+    pub screen_name: String,
+    pub rest_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// `user_tweets` 的输出，镜像 `ListOutput`（外加 `user`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserTweetsOutput {
+    pub user: UserBrief,
+    pub tweets: Vec<TweetSummary>,
+    pub cursor: Option<String>,
+    pub schema_version: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_entries: Option<Vec<Value>>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ListOpts {
     pub all: bool,

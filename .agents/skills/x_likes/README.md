@@ -37,7 +37,7 @@ npx skills add HerbertGao/x_likes_downloader --list
 
 ## 2. 安装 `x_likes_downloader` binary
 
-skill **不打包** binary——它假设 `x_likes_downloader` ≥ **2026.6.0** 已在 `PATH` 中。
+skill **不打包** binary——它假设 `x_likes_downloader` ≥ **2026.11.0** 已在 `PATH` 中。
 
 从 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases) 下载对应平台版本：
 
@@ -67,7 +67,7 @@ Invoke-WebRequest -Uri https://github.com/HerbertGao/x_likes_downloader/releases
 
 ```bash
 x_likes_downloader --version
-# 期望输出：x_likes_downloader 2026.6.0 或更新
+# 期望输出：x_likes_downloader 2026.11.0 或更新
 ```
 
 ---
@@ -135,7 +135,7 @@ x_likes_downloader auth status --json
 
 需要绝对路径时用 `command -v x_likes_downloader` 的结果替换 `command`。各客户端的配置文件位置请查该客户端自己的文档——本 skill 不再维护逐客户端的注册脚本。
 
-注册成功后 Agent 的工具列表里会出现 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` / `fetch_tweet`。验证：
+注册成功后 Agent 的工具列表里会出现 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` / `fetch_tweet` / `user_tweets`。验证：
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | x_likes_downloader serve --mcp

@@ -61,16 +61,16 @@ x_likes_downloader organize    # （可选）按用户名分文件夹整理
 
 > "看我最近点赞了哪些 Rust 相关的内容" → "把这两条的视频下回来"
 
-Agent 能用的 5 个工具：`list_likes`（列点赞）、`download_media`（下载）、`fetch_tweet`（按 URL/id 抓任意推文）、`auth_status`（检查凭据）、`setup_from_curl`（导入凭据）。下载进度实时反馈，大文件可中断、可断点续传。
+Agent 能用的 6 个工具：`list_likes`（列点赞）、`download_media`（下载）、`fetch_tweet`（按 URL/id 抓任意推文）、`user_tweets`（按 username 列任意账号的推文）、`auth_status`（检查凭据）、`setup_from_curl`（导入凭据）。下载进度实时反馈，大文件可中断、可断点续传。
 
 skill 走**双路径**：客户端已注册 MCP server 时用 MCP 工具（有进度通知、下载可取消）；没注册则自动回落 `x_likes_downloader ... --json` 命令行，功能等价。
 
 ### 第一步：装好 binary
 
-skill **不自带** binary，先确保 `x_likes_downloader` ≥ 2026.6.0 在 PATH 里，并已 `setup` 过凭据（见上方快速开始）：
+skill **不自带** binary，先确保 `x_likes_downloader` ≥ 2026.11.0 在 PATH 里，并已 `setup` 过凭据（见上方快速开始）：
 
 ```bash
-x_likes_downloader --version    # 应 ≥ 2026.6.0
+x_likes_downloader --version    # 应 ≥ 2026.11.0
 ```
 
 ### 第二步：装 skill
@@ -158,6 +158,23 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 ## 版本说明
 
 <details open>
+<summary><b>v2026.11 更新（新增 user_tweets：按 username 列任意账号推文 + 刷新协议端点）</b></summary>
+
+- **新增 `user_tweets` 能力**：按 username（screen_name，允许前导 @）列出**任意账号**的推文，链路 UserByScreenName（username → rest_id）→ UserTweets（游标翻页）。
+  - CLI：`x_likes_downloader user tweets --username <name> [--all] [--count N] [--since-cursor C]`
+  - MCP：新增第 6 个工具 `user_tweets`；`user{screen_name,rest_id,name}` + `tweets[]`（与 `list_likes` 同构）+ `cursor` 增量游标。
+  - 仅含 `TimelineAddEntries` 的顶层推文 entry，不含置顶推文（`TimelinePinEntry`）与会话折叠线程。
+- **协议端点刷新（2026-11 实测）**：defaults.json 的 Likes / TweetDetail queryId 更新为当前线上值（旧值仍可用但已非现役）；`XApi` 抽出 `graphql_get` 公共机械（TweetDetail / UserByScreenName / UserTweets 共用鉴权与错误分类）。
+- 协议配置新增 `USER_TWEETS_API_URL` / `USER_BY_SCREEN_NAME_API_URL` 等 6 个字段（env > private_tokens > defaults.json 四层解析，同既有约定）。
+
+- **版本 2026.11.0**。
+
+> 提示：仓库外 `x-organize` skill 的 `~/.config/x_organize/creds.json` 里记录的是旧 UserByScreenName queryId（实测仍可用，现役为 `AMIBMjtxEEATh4z8V9GtRg`）；该文件属用户侧数据，本仓库不代改。
+
+不变：CLI 既有行为、`download_media` 沙箱/续传/取消、凭据本地化。
+</details>
+
+<details>
 <summary><b>v2026.6.0 更新（新增 fetch_tweet：下载任意推文媒体）</b></summary>
 
 - **新增 `fetch_tweet` 能力**：按 URL 或 tweet_id 抓取**任意**推文（不再限于自己点赞过的）的媒体元数据，返回与 `list_likes` 同构的 `TweetSummary`（含 `media[]`）。
@@ -166,7 +183,7 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 - **两阶段错误分类**：HTTP 200 + GraphQL `errors[code:32]` 识别为 `auth_expired`；端点过期 `endpoint_stale` / 推文不可见 `tweet_unavailable` / 网络 `network_error` 各归其类；非 JSON body 容错不误判。
 - **网络健壮性**：TweetDetail 请求 30s 超时；构造期失败归 `internal_error`、传输期归 `network_error`，不再一刀切 network。
 - **兼容老推文**：覆盖 `TweetWithVisibilityResults` wrapper；焦点定位含 `rest_id` 软兜底。
-- **版本 2026.9.0`。
+- **版本 2026.6.0**。
 
 不变：CLI 既有行为、`download_media` 沙箱/续传/取消、各 host packaging 结构、凭据本地化。
 </details>
@@ -196,6 +213,7 @@ rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/x_likes_downloader"  # ETag 缓存（Lin
 | `organize` | 按用户名整理文件 |
 | `update` | 检查并自动更新 binary |
 | `likes list` / `media download` / `auth status` | 细粒度子命令 |
+| `tweet get` / `user tweets` | 抓单条推文 / 按 username 列推文 |
 | `serve --mcp` | 启动 MCP server（一般由 MCP client 自动拉起，无需手动运行） |
 
 ---

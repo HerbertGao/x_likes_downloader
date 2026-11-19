@@ -89,7 +89,7 @@ if [[ -f "$DEFAULTS_FILE" ]]; then
   if ! jq empty "$DEFAULTS_FILE" >/dev/null 2>&1; then
     err "$DEFAULTS_FILE is not valid JSON"
   else
-    allowed='["schema_version","likes_api_url","likes_features","likes_fieldtoggles","tweet_detail_api_url","tweet_features","tweet_fieldtoggles","bearer_token"]'
+    allowed='["schema_version","likes_api_url","likes_features","likes_fieldtoggles","tweet_detail_api_url","tweet_features","tweet_fieldtoggles","user_by_screen_name_api_url","user_by_screen_name_features","user_by_screen_name_fieldtoggles","user_tweets_api_url","user_tweets_features","user_tweets_fieldtoggles","bearer_token"]'
     unknown=$(jq --argjson a "$allowed" '[keys[] as $k | select(($a | index($k)) | not)]' "$DEFAULTS_FILE")
     [[ "$unknown" != "[]" ]] && err "$DEFAULTS_FILE contains undeclared keys: $unknown"
 
@@ -101,7 +101,7 @@ if [[ -f "$DEFAULTS_FILE" ]]; then
     fi
 
     # src/config.rs embeds this file; these keys are the >hardcoded-fallback protocol truth.
-    for key in tweet_detail_api_url tweet_features tweet_fieldtoggles; do
+    for key in tweet_detail_api_url tweet_features tweet_fieldtoggles user_by_screen_name_api_url user_by_screen_name_features user_by_screen_name_fieldtoggles user_tweets_api_url user_tweets_features user_tweets_fieldtoggles; do
       val=$(jq -r --arg k "$key" '.[$k] // empty' "$DEFAULTS_FILE")
       [[ -n "$val" ]] || err "$DEFAULTS_FILE field '$key' must be a non-empty string"
     done

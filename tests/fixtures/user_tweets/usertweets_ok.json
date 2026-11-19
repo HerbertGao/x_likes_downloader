@@ -1,0 +1,190 @@
+{
+ "data": {
+  "user": {
+   "result": {
+    "__typename": "User",
+    "rest_id": "900000001",
+    "timeline": {
+     "timeline": {
+      "instructions": [
+       {
+        "type": "TimelinePinEntry",
+        "entry": {
+         "entryId": "tweet-1700000000000031030",
+         "content": {
+          "itemContent": {
+           "tweet_results": {
+            "result": {
+             "__typename": "Tweet",
+             "rest_id": "1700000000000031030",
+             "core": {
+              "user_results": {
+               "result": {
+                "rest_id": "900000001",
+                "core": {
+                 "screen_name": "fixture_user_a",
+                 "name": "Fixture User A"
+                }
+               }
+              }
+             },
+             "legacy": {
+              "full_text": "Fixture pinned tweet text (placeholder).",
+              "created_at": "Thu Apr 06 15:24:15 +0000 2017"
+             }
+            }
+           }
+          }
+         }
+        }
+       },
+       {
+        "type": "TimelineAddEntries",
+        "entries": [
+         {
+          "entryId": "tweet-1700000000000031002",
+          "content": {
+           "itemContent": {
+            "tweet_results": {
+             "result": {
+              "__typename": "Tweet",
+              "rest_id": "1700000000000031002",
+              "core": {
+               "user_results": {
+                "result": {
+                 "rest_id": "900000001",
+                 "core": {
+                  "screen_name": "fixture_user_a",
+                  "name": "Fixture User A"
+                 }
+                }
+               }
+              },
+              "legacy": {
+               "full_text": "Fixture tweet text (placeholder, de-identified).",
+               "created_at": "Thu Apr 06 15:24:15 +0000 2017",
+               "extended_entities": {
+                "media": [
+                 {
+                  "type": "photo",
+                  "media_url_https": "https://example.com/fixture_media_1.jpg"
+                 }
+                ]
+               }
+              },
+              "quoted_status_permalink": {
+               "url": "https://example.com/fixture_user_c/status/1700000000000031004",
+               "expanded": "https://example.com/fixture_user_c/status/1700000000000031004",
+               "display": "example.com/fixture_user_c/status/1700000000000031004"
+              }
+             }
+            }
+           }
+          }
+         },
+         {
+          "entryId": "tweet-1700000000000031010",
+          "content": {
+           "itemContent": {
+            "tweet_results": {
+             "result": {
+              "__typename": "Tweet",
+              "rest_id": "1700000000000031010",
+              "core": {
+               "user_results": {
+                "result": {
+                 "rest_id": "900000001",
+                 "core": {
+                  "screen_name": "fixture_user_a",
+                  "name": "Fixture User A"
+                 }
+                }
+               }
+              },
+              "legacy": {
+               "full_text": "Fixture tweet text (placeholder, de-identified).",
+               "created_at": "Thu Apr 06 15:24:15 +0000 2017",
+               "retweeted_status_result": {
+                "result": {
+                 "__typename": "Tweet",
+                 "rest_id": "1700000000000031020",
+                 "core": {
+                  "user_results": {
+                   "result": {
+                    "rest_id": "900000002",
+                    "core": {
+                     "screen_name": "fixture_user_b",
+                     "name": "Fixture User B"
+                    }
+                   }
+                  }
+                 },
+                 "legacy": {
+                  "full_text": "Fixture original tweet text (placeholder).",
+                  "created_at": "Thu Apr 06 15:24:15 +0000 2017",
+                  "extended_entities": {
+                   "media": [
+                    {
+                     "type": "photo",
+                     "media_url_https": "https://example.com/fixture_media_2.jpg"
+                    }
+                   ]
+                  }
+                 }
+                }
+               }
+              }
+             }
+            }
+           }
+          }
+         },
+         {
+          "entryId": "profile-conversation-1700000000000031005",
+          "content": {
+           "items": [
+            {
+             "item": {
+              "itemContent": {
+               "tweet_results": {
+                "result": {
+                 "__typename": "Tweet",
+                 "rest_id": "1700000000000031025",
+                 "core": {
+                  "user_results": {
+                   "result": {
+                    "rest_id": "900000001",
+                    "core": {
+                     "screen_name": "fixture_user_a",
+                     "name": "Fixture User A"
+                    }
+                   }
+                  }
+                 },
+                 "legacy": {
+                  "full_text": "Fixture folded thread tweet (placeholder).",
+                  "created_at": "Thu Apr 06 15:24:15 +0000 2017"
+                 }
+                }
+               }
+              }
+             }
+            }
+           ]
+          }
+         },
+         {
+          "entryId": "cursor-bottom-1700000000000031018",
+          "content": {
+           "value": "FIXTURE_CURSOR_1"
+          }
+         }
+        ]
+       }
+      ]
+     }
+    }
+   }
+  }
+ }
+}

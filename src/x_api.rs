@@ -18,101 +18,10 @@ impl XApi {
         Ok(XApi { client, config })
     }
 
-    pub async fn get_liked_tweets_internal(&self) -> Result<Vec<Value>> {
-        let mut all_tweets = Vec::new();
-        let mut cursor: Option<String> = None;
-
-        loop {
-            let mut variables = json!({
-                "userId": self.config.user_id,
-                "count": self.config.count.parse::<i32>()?,
-                "includePromotedContent": false,
-                "withClientEventToken": false,
-                "withBirdwatchNotes": false,
-                "withVoice": true,
-                "withV2Timeline": true
-            });
-
-            if let Some(ref cursor_val) = cursor {
-                variables["cursor"] = json!(cursor_val);
-            }
-
-            let variables_str = serde_json::to_string(&variables)?;
-            let variables_encoded = urlencoding::encode(&variables_str);
-            let features_encoded = urlencoding::encode(&self.config.likes_features);
-            let fieldtoggles_encoded = urlencoding::encode(&self.config.likes_fieldtoggles);
-
-            let url = format!(
-                "{}?variables={}&features={}&fieldToggles={}",
-                self.config.likes_api_url,
-                variables_encoded,
-                features_encoded,
-                fieldtoggles_encoded
-            );
-
-            eprintln!("请求 URL: {}", url);
-
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(
-                "Authorization",
-                format!("Bearer {}", self.config.bearer_token).parse()?,
-            );
-            headers.insert(
-                "Cookie",
-                format!(
-                    "auth_token={}; ct0={}",
-                    self.config.auth_token, self.config.ct0
-                )
-                .parse()?,
-            );
-            headers.insert("X-Csrf-Token", self.config.ct0.parse()?);
-            headers.insert("User-Agent", self.config.user_agent.parse()?);
-
-            eprintln!("请求 headers: {:?}", headers);
-
-            let response = self.client.get(&url).headers(headers).send().await?;
-
-            if !response.status().is_success() {
-                let status = response.status();
-                let text = response.text().await?;
-                return Err(anyhow::anyhow!("API 请求失败: {} {}", status, text));
-            }
-
-            let data: Value = response.json().await?;
-
-            let (tweets, new_cursor) = self.parse_likes_response(&data)?;
-            eprintln!(
-                "本页获取到 {} 条 tweet，cursor: {:?}",
-                tweets.len(),
-                new_cursor
-            );
-
-            all_tweets.extend(tweets);
-
-            // 如果未启用 ALL 模式，则只返回第一页数据
-            if !self.config.all {
-                break;
-            }
-
-            // 如果没有新的 cursor 或新 cursor 与上一次相同，则认为没有更多数据
-            if new_cursor.is_none() || new_cursor == cursor {
-                break;
-            }
-            cursor = new_cursor;
-        }
-
-        Ok(all_tweets)
-    }
-
     /// Fetch the `TweetDetail` GraphQL response for a single tweet.
     ///
-    /// 返回 `(http_status, body)`。鉴权 header 复用与 Likes 一致的构造；
-    /// 先取 HTTP 状态码再读 body，仅传输错误返 `Err`（供上层映射 network_error）；
-    /// 非 JSON body（如 401 HTML 页）解析为 `Value::Null` 而非 `Err`，非 2xx 不提前 `Err`，
-    /// 让上层分类器靠状态码正确判定。禁止把含 cookie/bearer 的 header 或完整 URL 打到 stderr。
-    /// 错误分两类：HTTP 发起前的构造失败（序列化 / header 解析）→ `internal_error`
-    /// （非网络、不可重试）；HTTP 发起后的传输失败（连接 / 超时 / 读取）→ `network_error`。
-    /// 不把构造失败误标成可重试的 network_error。
+    /// 返回 `(http_status, body)`。构造/传输错误分类与禁止泄漏 header 的约束见
+    /// [`Self::graphql_get`]（多个 GraphQL GET 共用该机械）。
     pub async fn get_tweet_detail(
         &self,
         tweet_id: &str,
@@ -128,22 +37,94 @@ impl XApi {
             "withVoice": true
         });
 
-        let variables_str = serde_json::to_string(&variables).map_err(|e| {
+        self.graphql_get(
+            &self.config.tweet_detail_api_url,
+            &variables,
+            &self.config.tweet_features,
+            &self.config.tweet_fieldtoggles,
+        )
+        .await
+    }
+
+    /// Fetch the `UserByScreenName` GraphQL response for a username.
+    ///
+    /// 返回 `(http_status, body)`；用户不存在时 X 返回 HTTP 200 + `data` 缺 `user` 键，
+    /// 由上层（`agent::user_tweets`）分类为 `tweet_unavailable`。
+    pub async fn get_user_by_screen_name(
+        &self,
+        screen_name: &str,
+    ) -> std::result::Result<(u16, Value), ErrorPayload> {
+        let variables = json!({ "screen_name": screen_name });
+
+        self.graphql_get(
+            &self.config.user_by_screen_name_api_url,
+            &variables,
+            &self.config.user_by_screen_name_features,
+            &self.config.user_by_screen_name_fieldtoggles,
+        )
+        .await
+    }
+
+    /// Fetch one page of the `UserTweets` GraphQL response for a user id.
+    ///
+    /// 返回 `(http_status, body)`；翻页由上层按 `cursor-bottom-` 游标驱动，
+    /// 单页条数走 `count`（默认沿用配置值）。
+    pub async fn get_user_tweets(
+        &self,
+        user_id: &str,
+        count: i64,
+        cursor: Option<&str>,
+    ) -> std::result::Result<(u16, Value), ErrorPayload> {
+        let mut variables = json!({
+            "userId": user_id,
+            "count": count,
+            "includePromotedContent": false,
+            "withQuickPromoteEligibilityTweetFields": false,
+            "withVoice": true
+        });
+        if let Some(c) = cursor {
+            variables["cursor"] = json!(c);
+        }
+
+        self.graphql_get(
+            &self.config.user_tweets_api_url,
+            &variables,
+            &self.config.user_tweets_features,
+            &self.config.user_tweets_fieldtoggles,
+        )
+        .await
+    }
+
+    /// 鉴权 GraphQL GET 的公共机械：拼 URL（variables/features/fieldToggles 均 URL 编码）、
+    /// 构造 headers（Bearer / Cookie / CSRF / 可选 UA）、发送并读取 body。
+    ///
+    /// 错误分两类：HTTP 发起前的构造失败（序列化 / header 解析）→ `internal_error`
+    /// （非网络、不可重试）；HTTP 发起后的传输失败（连接 / 超时 / 读取）→ `network_error`。
+    /// 不把构造失败误标成可重试的 network_error。
+    /// 返回 `(http_status, body)`：先取状态码再读 body，仅传输错误返 `Err`（供上层映射
+    /// network_error）；非 JSON body（如 401 HTML 页）解析为 `Value::Null` 而非 `Err`，
+    /// 非 2xx 不提前 `Err`，让上层分类器靠状态码正确判定。
+    /// 禁止把含 cookie/bearer 的 header 或完整 URL 打到 stderr。
+    async fn graphql_get(
+        &self,
+        api_url: &str,
+        variables: &Value,
+        features: &str,
+        fieldtoggles: &str,
+    ) -> std::result::Result<(u16, Value), ErrorPayload> {
+        let variables_str = serde_json::to_string(variables).map_err(|e| {
             ErrorPayload::new(
                 ErrorKind::InternalError,
-                format!("TweetDetail variables 序列化失败: {e}"),
+                format!("GraphQL variables 序列化失败: {e}"),
             )
         })?;
         let variables_encoded = urlencoding::encode(&variables_str);
-        let features_encoded = urlencoding::encode(&self.config.tweet_features);
-        let fieldtoggles_encoded = urlencoding::encode(&self.config.tweet_fieldtoggles);
+        let features_encoded = urlencoding::encode(features);
+        let fieldtoggles_encoded = urlencoding::encode(fieldtoggles);
 
         let url = format!(
             "{}?variables={}&features={}&fieldToggles={}",
-            self.config.tweet_detail_api_url,
-            variables_encoded,
-            features_encoded,
-            fieldtoggles_encoded
+            api_url, variables_encoded, features_encoded, fieldtoggles_encoded
         );
 
         let header_err = |name: &str| {
@@ -196,59 +177,18 @@ impl XApi {
             .send()
             .await
             .map_err(|e| {
-                ErrorPayload::new(
-                    ErrorKind::NetworkError,
-                    format!("TweetDetail 请求失败: {e}"),
-                )
+                ErrorPayload::new(ErrorKind::NetworkError, format!("GraphQL 请求失败: {e}"))
             })?;
 
         let status = response.status().as_u16();
         let text = response.text().await.map_err(|e| {
             ErrorPayload::new(
                 ErrorKind::NetworkError,
-                format!("读取 TweetDetail 响应失败: {e}"),
+                format!("读取 GraphQL 响应失败: {e}"),
             )
         })?;
         let resp = serde_json::from_str(&text).unwrap_or(Value::Null);
 
         Ok((status, resp))
-    }
-
-    fn parse_likes_response(&self, data: &Value) -> Result<(Vec<Value>, Option<String>)> {
-        let mut tweets = Vec::new();
-        let mut new_cursor = None;
-
-        if let Some(instructions) = data
-            .get("data")
-            .and_then(|d| d.get("user"))
-            .and_then(|u| u.get("result"))
-            .and_then(|r| r.get("timeline_v2"))
-            .and_then(|t| t.get("timeline"))
-            .and_then(|t| t.get("instructions"))
-            .and_then(|i| i.as_array())
-        {
-            for instruction in instructions {
-                if instruction.get("type") == Some(&json!("TimelineAddEntries")) {
-                    if let Some(entries) = instruction.get("entries").and_then(|e| e.as_array()) {
-                        for entry in entries {
-                            if let Some(entry_id) = entry.get("entryId").and_then(|id| id.as_str())
-                            {
-                                if entry_id.starts_with("tweet-") {
-                                    tweets.push(entry.clone());
-                                } else if entry_id.starts_with("cursor-bottom-") {
-                                    new_cursor = entry
-                                        .get("content")
-                                        .and_then(|c| c.get("value"))
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok((tweets, new_cursor))
     }
 }

@@ -27,6 +27,7 @@ pub mod agent {
     pub mod list_likes;
     pub mod mcp_server;
     pub mod types;
+    pub mod user_tweets;
 
     pub use auth_status::auth_status;
     pub use download_media::download_media;
@@ -35,4 +36,5 @@ pub mod agent {
     pub use list_likes::list_likes;
     pub use mcp_server::run_serve_mcp;
     pub use types::*;
+    pub use user_tweets::user_tweets;
 }

@@ -3,10 +3,11 @@
 //! 目的：在 CI 环境（无 mcp-inspector / 无 X cookies）能跑的纯 stdio 集成测试。
 //! 通过 spawn 子进程 + 喂入手写 JSON-RPC 请求 + 解析 stdout，验证：
 //! 1. server 启动（initialize 握手）
-//! 2. tools/list 返回 5 个预期工具，每个工具有 inputSchema
-//! 3. stdin EOF 触发优雅关闭
+//! 2. tools/list 返回 6 个预期工具，每个工具有 inputSchema
+//! 3. tools/call `user_tweets` 非法 username 返回 isError + `invalid_argument` 信封（免凭据免网络）
+//! 4. stdin EOF 触发优雅关闭
 //!
-//! 不验证：tools/call 实际执行（需要凭据），cancellation（v2.0 deferred）。
+//! 不验证：tools/call 需要凭据的正常执行，cancellation（v2.0 deferred）。
 
 use std::process::Stdio;
 use std::time::Duration;
@@ -24,6 +25,7 @@ const EXPECTED_TOOLS: &[&str] = &[
     "auth_status",
     "setup_from_curl",
     "fetch_tweet",
+    "user_tweets",
 ];
 
 fn jsonrpc_initialize() -> String {
@@ -157,6 +159,40 @@ async fn mcp_server_handshake_and_tools_list() {
             "tool '{name}' missing description"
         );
     }
+
+    // tools/call user_tweets：非法 username 走免凭据免网络的 hermetic 错误路径，
+    // 钉住新工具的 rmcp 参数反序列化（Parameters<UserTweetsRequest>）与业务错误信封 wiring。
+    stdin
+        .write_all(
+            b"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"user_tweets\",\"arguments\":{\"username\":\"a b\"}}}\n",
+        )
+        .await
+        .expect("write tools/call user_tweets");
+
+    let call_response_line = loop {
+        let line = timeout(Duration::from_secs(5), reader.next_line())
+            .await
+            .expect("tools/call timeout")
+            .expect("read tools/call response")
+            .expect("expected response line");
+        let v: Value = serde_json::from_str(&line).expect("parse line as JSON");
+        if v.get("id") == Some(&Value::from(3u64)) {
+            break v;
+        }
+    };
+    assert!(
+        call_response_line["result"]["isError"]
+            .as_bool()
+            .unwrap_or(false),
+        "user_tweets invalid-username call must return isError: true, got: {call_response_line:?}"
+    );
+    let err_text = call_response_line["result"]["content"][0]["text"]
+        .as_str()
+        .expect("error content text");
+    assert!(
+        err_text.contains("\"kind\":\"invalid_argument\""),
+        "error envelope kind must be invalid_argument, got: {err_text}"
+    );
 
     // stdin EOF 优雅关闭
     drop(stdin);

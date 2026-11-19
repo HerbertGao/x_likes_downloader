@@ -1,38 +1,39 @@
 ---
 name: x-likes
-description: Operate the user's own X (Twitter) Likes via natural language — list likes, download media, fetch any tweet's media, check credential health. Prefers the local `x_likes_downloader serve --mcp` MCP server (5 tools) and falls back to the `x_likes_downloader ... --json` CLI when MCP is unavailable. Works in any agent with shell access. All credentials stay on the user's machine.
-min_binary_version: 2026.9.0
+description: Operate the user's own X (Twitter) Likes via natural language — list likes, download media, fetch any tweet's media, list any user's tweets, check credential health. Prefers the local `x_likes_downloader serve --mcp` MCP server (6 tools) and falls back to the `x_likes_downloader ... --json` CLI when MCP is unavailable. Works in any agent with shell access. All credentials stay on the user's machine.
+min_binary_version: 2026.11.0
 ---
 
 # X Likes Downloader Skill
 
-让 AI Agent 通过自然语言操作"我自己的 X 点赞"——列点赞、按需下载媒体、抓取任意推文的媒体、自检凭据健康状态。全部逻辑在本机执行，凭据从不离开用户机器。
+让 AI Agent 通过自然语言操作"我自己的 X 点赞"——列点赞、按需下载媒体、抓取任意推文的媒体、按 username 列任意账号的推文、自检凭据健康状态。全部逻辑在本机执行，凭据从不离开用户机器。
 
 **适用场景**：
 
 - "看一下我最近点赞了哪些和 Rust 有关的内容"
 - "把这三条点赞里的视频下载下来"
 - "这条推文里的视频帮我存下来"（不限于点赞过的推文）
+- "把 @alice 最近发的推文里的图都存下来"（按 username 列任意账号推文）
 - "我的 cookie 还能用吗？"
 
-**不适用**：跨账号、批量监控他人、第三方 API key 模式。
+**不适用**：多账号凭据切换、批量监控他人、第三方 API key 模式。
 
 ---
 
 ## 前置依赖
 
-- `x_likes_downloader` 可执行文件 ≥ **2026.6.0**，且位于 `PATH` 中。未安装时引导用户到 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases)
+- `x_likes_downloader` 可执行文件 ≥ **2026.11.0**，且位于 `PATH` 中。未安装时引导用户到 [GitHub Releases](https://github.com/HerbertGao/x_likes_downloader/releases)
 - 用户已导入 cURL 凭据（首次使用）。缺失时见下方 `setup_from_curl`：`x_likes_downloader setup --curl-file <path>`
 
 ---
 
 ## 调用形态：MCP 优先，CLI 回落
 
-两种形态共享同一份 lib 实现（`agent::list_likes` / `agent::download_media` / `agent::auth_status` / `agent::import_curl` / `agent::fetch_tweet`），语义、JSON 结构、错误 `kind` 完全一致。**任选其一即可，不要在同一轮对话里为同一件事混用。**
+两种形态共享同一份 lib 实现（`agent::list_likes` / `agent::download_media` / `agent::auth_status` / `agent::import_curl` / `agent::fetch_tweet` / `agent::user_tweets`），语义、JSON 结构、错误 `kind` 完全一致。**任选其一即可，不要在同一轮对话里为同一件事混用。**
 
 **判断用哪个**：
 
-- **MCP 可用** → 用 MCP 工具。`x_likes_downloader serve --mcp` 已注册到客户端时，你的工具列表里会出现 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` / `fetch_tweet`。**优先选它**：下载有 `notifications/progress` 实时进度，`notifications/cancelled` 能真实中断
+- **MCP 可用** → 用 MCP 工具。`x_likes_downloader serve --mcp` 已注册到客户端时，你的工具列表里会出现 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` / `fetch_tweet` / `user_tweets`。**优先选它**：下载有 `notifications/progress` 实时进度，`notifications/cancelled` 能真实中断
 - **MCP 不可用**（工具不在列表里 / 客户端不支持 MCP / 用户只装了 binary）→ 用 shell 调用同名子命令，读 stdout 的 JSON 信封。功能等价，但没有进度推送、无法中途取消
 
 | 操作 | MCP 工具 | CLI 回落 |
@@ -42,6 +43,7 @@ min_binary_version: 2026.9.0
 | 凭据自检 | `auth_status` | `x_likes_downloader auth status --json` |
 | 导入凭据 | `setup_from_curl` | `x_likes_downloader setup --curl-file <path>` |
 | 抓任意推文 | `fetch_tweet` | `x_likes_downloader tweet get --url <url> --json` |
+| 列任意账号推文 | `user_tweets` | `x_likes_downloader user tweets --json --username <name>` |
 
 CLI 回落统一输出信封 `{ok, data?, meta: {schema_version, cursor?}, error?}`：`ok == false` 时 `error` 含 `{kind, message, hint?}`，语义与 MCP 错误一致。退出码非零即失败，**不要**只看 stdout 是否为空。
 
@@ -51,7 +53,7 @@ CLI 回落统一输出信封 `{ok, data?, meta: {schema_version, cursor?}, error
 
 ## Agent 工具表
 
-五个工具。MCP 形态下客户端启动后调用 `tools/list` 自动发现它们；CLI 形态下即上表的子命令。
+六个工具。MCP 形态下客户端启动后调用 `tools/list` 自动发现它们；CLI 形态下即上表的子命令。
 
 ### 1. `list_likes`
 
@@ -312,6 +314,52 @@ x_likes_downloader tweet get --id 1234567890 --json
 
 **Agent 行为约定**：取回 `tweet.media[]` 后直接作为 `download_media` 的 `items[]` 下载即可（`MediaItem` 形态完全一致）；`fetch_tweet` 只取元数据，**不下载**。
 
+
+### 6. `user_tweets`
+
+**用途**：按 username 列出指定账号（不限于本人）的推文列表。返回 `user{screen_name, rest_id, name}` + 与 `list_likes` 同构的 `tweets[]` + `cursor` 增量游标。Agent 应当把 `tweets[].media[]` 元素直接传给 `download_media` 下载。
+
+**调用**：
+
+```bash
+x_likes_downloader user tweets --json --username alice
+x_likes_downloader user tweets --json --username alice --all
+x_likes_downloader user tweets --json --username alice --since-cursor "<cursor>"
+```
+
+**参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `username` | string | 是 | 目标账号 screen_name，允许前导 `@`；空 / 超长 / 含 `[A-Za-z0-9_]` 之外字符返回 `invalid_argument` |
+| `all` | bool | 否 | 翻页拉全部可见推文；默认仅首页 |
+| `since_cursor` | string | 否 | 增量同步起点游标（来自上次输出的 `cursor` 字段） |
+| `count` | number | 否 | 单页条数请求值；X 端忽略过小的 count，单页实际约 20 条，分页以 `cursor` 为准 |
+| `include_raw` | bool | 否 | 同时返回原始 GraphQL entry，**显著增加 token 成本**，仅用于调试 |
+
+**返回内容**（MCP：`CallToolResult { isError: false }`，text 反序列化后为 `UserTweetsOutput`；CLI：stdout 信封的 `data` 字段）：
+
+```jsonc
+{
+  "user": { "screen_name": "alice", "rest_id": "1234", "name": "Alice" },
+  "tweets": [
+    {
+      "id": "1234567890",
+      "author_handle": "alice",
+      "media": [ /* 与 list_likes 的 media[] 元素完全同构 */ ]
+    }
+  ],
+  "cursor": "<下一页游标，翻到尽头为 null>",
+  "schema_version": 1
+}
+```
+
+`tweets[]` 元素与 `list_likes` 输出**完全同构**（同一 `TweetSummary` 结构）。已知边界：单页条数由 X 端控制（约 20 条，`count` 按请求透传）；仅含顶层推文，不含置顶推文（`TimelinePinEntry`）与会话折叠线程；转推（RT）条目的 `media[]` 恒为空——内层被转推文的媒体不展开（与 `likes list` 同构），需要其媒体时先从条目 `text` 中的原推链接解析原推 id 再 `fetch_tweet`；无效或过期的 `cursor` 会被 X 静默忽略并返回首页（与 `likes list` 一致）。
+
+**典型错误 `kind`**：`invalid_argument`（username 非法）/ `auth_expired` / `endpoint_stale` / `tweet_unavailable`（用户不存在 / 已注销 / 被封禁，不应重试）/ `rate_limited`（`--all` 大量翻页时）/ `network_error`
+
+**Agent 行为约定**：取回 `tweets[].media[]` 后直接作为 `download_media` 的 `items[]` 下载即可；`user_tweets` 只取元数据，**不下载**。
+
 ---
 
 ## 不暴露的能力
@@ -337,7 +385,7 @@ x_likes_downloader tweet get --id 1234567890 --json
 | 进度反馈 | 仅 MCP 形态：`download_media` 在请求带 `_meta.progressToken` 时通过 MCP `notifications/progress` 推送；其它工具无进度 |
 | Cancellation | 仅 MCP 形态：**v2.1 起收到 `notifications/cancelled` 真实生效**——in-flight item 在 1s 内停止并返回 `isError: false` + 完整 `DownloadOutput`（`cancelled` 状态，`.partial` 保留供续传）。CLI 形态无取消通道 |
 | `auth_expired` / `endpoint_stale` | Agent 应建议用户重新导出 cURL 并调用 `setup_from_curl` |
-| `tweet_unavailable`（仅 `fetch_tweet`） | Agent 应告知用户该推文不存在 / 已删除 / 受保护或当前凭据不可见，**不应重试** |
+| `tweet_unavailable`（`fetch_tweet` / `user_tweets`） | Agent 应告知用户目标推文不存在、已删除、受保护或不可见（`fetch_tweet`），或目标账号不存在、已注销、被封禁（`user_tweets`）——受保护账号视当前凭据的可见性，可能返回该错误、也可能返回空 `tweets[]`；两类均**不应重试** |
 | `fetch_tweet` 成功但 `tweet.media` 为空 | Agent 应提示用户该推文可能无媒体、或其视频为 HLS-only（当前不支持下载），而非把空 `media[]` 直接喂给 `download_media` 后静默无结果 |
 | `binary_missing` | Agent 应将用户引导到 GitHub Releases 安装页 |
 
@@ -359,6 +407,6 @@ x_likes_downloader tweet get --id 1234567890 --json
 | --- | --- |
 | MCP 工具不在列表里 | 走 CLI 回落；或让用户按 [README.md](./README.md) 注册 `x_likes_downloader serve --mcp` 后重启客户端 |
 | CLI 报 command not found | binary 未安装或不在 `PATH`；引导到 GitHub Releases |
-| 报版本过低 | 需 ≥ `2026.6.0`；让用户升级 binary |
+| 报版本过低 | 需 ≥ `2026.11.0`；让用户升级 binary |
 | `not_configured` | 凭据未导入；引导用户跑 `x_likes_downloader setup` |
 | `auth_expired` / `endpoint_stale` | 凭据或 GraphQL queryId 过期；重新导出 cURL 并 `setup_from_curl` |

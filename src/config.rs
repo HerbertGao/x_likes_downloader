@@ -46,6 +46,23 @@ pub fn credentials_path() -> PathBuf {
 const HARDCODED_BEARER: &str =
     "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3DbYqd8UMSvvy";
 
+/// 第 4 层兜底（非权威）：与 vendored `defaults.json` 同值，避免 defaults.json 意外缺失时退化。
+/// 单源性由 `tests::hardcoded_fallbacks_match_vendored_defaults` 强制（漂移即测试失败）。
+const FALLBACK_LIKES_API_URL: &str = "https://x.com/i/api/graphql/ZjyvI1V9gajq5eclHCObzA/Likes";
+const FALLBACK_LIKES_FIELD_TOGGLES: &str = r#"{"withPayments":false,"withArticlePlainText":false}"#;
+const FALLBACK_TWEET_DETAIL_API_URL: &str =
+    "https://x.com/i/api/graphql/dQDdKtt882nl-Km98FJGSQ/TweetDetail";
+const FALLBACK_TWEET_FIELD_TOGGLES: &str = r#"{"withArticleRichContentState":true,"withArticlePlainText":false,"withArticleSummaryText":true,"withArticleVoiceOver":true,"withPayments":false,"withGrokAnalyze":false,"withDisallowedReplyControls":false}"#;
+const FALLBACK_USER_BY_SCREEN_NAME_API_URL: &str =
+    "https://x.com/i/api/graphql/AMIBMjtxEEATh4z8V9GtRg/UserByScreenName";
+const FALLBACK_USER_BY_SCREEN_NAME_FIELD_TOGGLES: &str = r#"{"withAuxiliaryUserLabels":false}"#;
+const FALLBACK_USER_TWEETS_API_URL: &str =
+    "https://x.com/i/api/graphql/D6z-FJI2pKuwEeYYxVIGbg/UserTweets";
+const FALLBACK_USER_TWEETS_FIELD_TOGGLES: &str = r#"{"withArticlePlainText":false}"#;
+// features 兜底按既有约定为 `{}`：真实 features 集由 defaults.json 承载（体积大且随 X 演进频繁）。
+// 漂移测试只断言 defaults.json 确有非空 features，不要求第 4 层与之等值。
+const FALLBACK_EMPTY_JSON_OBJECT: &str = r#"{}"#;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     // 用户认证信息
@@ -79,6 +96,12 @@ pub struct Config {
     pub tweet_detail_api_url: String,
     pub tweet_features: String,
     pub tweet_fieldtoggles: String,
+    pub user_by_screen_name_api_url: String,
+    pub user_by_screen_name_features: String,
+    pub user_by_screen_name_fieldtoggles: String,
+    pub user_tweets_api_url: String,
+    pub user_tweets_features: String,
+    pub user_tweets_fieldtoggles: String,
 
     // Mock配置
     pub mock_mode: bool,
@@ -148,42 +171,84 @@ impl Config {
                 "likes_api_url",
                 &private_tokens,
                 &defaults,
-                "https://x.com/i/api/graphql/XHn_Tw60c6pi0n3DGhpwiA/Likes",
+                FALLBACK_LIKES_API_URL,
             ),
             likes_features: resolve_protocol_field(
                 "LIKES_FEATURES",
                 "likes_features",
                 &private_tokens,
                 &defaults,
-                r#"{}"#,
+                FALLBACK_EMPTY_JSON_OBJECT,
             ),
             likes_fieldtoggles: resolve_protocol_field(
                 "LIKES_FIELDTOGGLES",
                 "likes_fieldtoggles",
                 &private_tokens,
                 &defaults,
-                r#"{"withArticlePlainText":false}"#,
+                FALLBACK_LIKES_FIELD_TOGGLES,
             ),
             tweet_detail_api_url: resolve_protocol_field(
                 "TWEET_DETAIL_API_URL",
                 "tweet_detail_api_url",
                 &private_tokens,
                 &defaults,
-                "https://x.com/i/api/graphql/zoF7_t363wZyzylk-BLfZQ/TweetDetail",
+                FALLBACK_TWEET_DETAIL_API_URL,
             ),
             tweet_features: resolve_protocol_field(
                 "TWEET_FEATURES",
                 "tweet_features",
                 &private_tokens,
                 &defaults,
-                r#"{}"#,
+                FALLBACK_EMPTY_JSON_OBJECT,
             ),
             tweet_fieldtoggles: resolve_protocol_field(
                 "TWEET_FIELDTOGGLES",
                 "tweet_fieldtoggles",
                 &private_tokens,
                 &defaults,
-                r#"{}"#,
+                FALLBACK_TWEET_FIELD_TOGGLES,
+            ),
+            user_by_screen_name_api_url: resolve_protocol_field(
+                "USER_BY_SCREEN_NAME_API_URL",
+                "user_by_screen_name_api_url",
+                &private_tokens,
+                &defaults,
+                FALLBACK_USER_BY_SCREEN_NAME_API_URL,
+            ),
+            user_by_screen_name_features: resolve_protocol_field(
+                "USER_BY_SCREEN_NAME_FEATURES",
+                "user_by_screen_name_features",
+                &private_tokens,
+                &defaults,
+                FALLBACK_EMPTY_JSON_OBJECT,
+            ),
+            user_by_screen_name_fieldtoggles: resolve_protocol_field(
+                "USER_BY_SCREEN_NAME_FIELDTOGGLES",
+                "user_by_screen_name_fieldtoggles",
+                &private_tokens,
+                &defaults,
+                FALLBACK_USER_BY_SCREEN_NAME_FIELD_TOGGLES,
+            ),
+            user_tweets_api_url: resolve_protocol_field(
+                "USER_TWEETS_API_URL",
+                "user_tweets_api_url",
+                &private_tokens,
+                &defaults,
+                FALLBACK_USER_TWEETS_API_URL,
+            ),
+            user_tweets_features: resolve_protocol_field(
+                "USER_TWEETS_FEATURES",
+                "user_tweets_features",
+                &private_tokens,
+                &defaults,
+                FALLBACK_EMPTY_JSON_OBJECT,
+            ),
+            user_tweets_fieldtoggles: resolve_protocol_field(
+                "USER_TWEETS_FIELDTOGGLES",
+                "user_tweets_fieldtoggles",
+                &private_tokens,
+                &defaults,
+                FALLBACK_USER_TWEETS_FIELD_TOGGLES,
             ),
             mock_mode: env::var("MOCK_MODE")
                 .unwrap_or_else(|_| "False".to_string())
@@ -315,6 +380,110 @@ mod tests {
     }
 
     #[test]
+    fn vendored_defaults_has_user_tweets_fields() {
+        // defaults.json 必须承载 user_by_screen_name_* / user_tweets_* 六字段的真值
+        // （同 tweet_detail_* 的原子性约束：缺真值会落到 `{}` / 旧 qid 兜底，请求被 X 拒）。
+        let v: Value = serde_json::from_str(VENDORED_DEFAULTS).unwrap();
+        for key in &[
+            "user_by_screen_name_api_url",
+            "user_by_screen_name_features",
+            "user_by_screen_name_fieldtoggles",
+            "user_tweets_api_url",
+            "user_tweets_features",
+            "user_tweets_fieldtoggles",
+        ] {
+            let s = v
+                .get(*key)
+                .and_then(|x| x.as_str())
+                .unwrap_or_else(|| panic!("defaults.json 缺少字段 {}", key));
+            assert!(!s.is_empty(), "defaults.json 字段 {} 不应为空", key);
+        }
+        // features 真值必须是合法 JSON object（同 tweet_features 约束）。
+        for key in &["user_by_screen_name_features", "user_tweets_features"] {
+            let s = v.get(*key).and_then(|x| x.as_str()).unwrap();
+            let parsed: Value =
+                serde_json::from_str(s).unwrap_or_else(|_| panic!("{} 应为合法 JSON", key));
+            assert!(parsed.is_object(), "{} 应解析为 JSON object", key);
+        }
+    }
+
+    /// 本变更新增的「单源性」需求的可执行校验：
+    /// 每个 URL / fieldToggles 的第 4 层兜底必须与 defaults.json 同值，且 fieldToggles 为合法非空 JSON。
+    #[test]
+    fn hardcoded_fallbacks_match_vendored_defaults() {
+        let defaults: Value = serde_json::from_str(VENDORED_DEFAULTS).unwrap();
+        let pairs = [
+            ("likes_api_url", FALLBACK_LIKES_API_URL),
+            ("likes_fieldtoggles", FALLBACK_LIKES_FIELD_TOGGLES),
+            ("tweet_detail_api_url", FALLBACK_TWEET_DETAIL_API_URL),
+            ("tweet_fieldtoggles", FALLBACK_TWEET_FIELD_TOGGLES),
+            (
+                "user_by_screen_name_api_url",
+                FALLBACK_USER_BY_SCREEN_NAME_API_URL,
+            ),
+            (
+                "user_by_screen_name_fieldtoggles",
+                FALLBACK_USER_BY_SCREEN_NAME_FIELD_TOGGLES,
+            ),
+            ("user_tweets_api_url", FALLBACK_USER_TWEETS_API_URL),
+            (
+                "user_tweets_fieldtoggles",
+                FALLBACK_USER_TWEETS_FIELD_TOGGLES,
+            ),
+        ];
+        for (key, hardcoded) in pairs {
+            let vendored = defaults
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| panic!("defaults.json 缺少字段 {}", key));
+            assert_eq!(
+                vendored, hardcoded,
+                "defaults.json 与 config.rs 兜底漂移（{}）——两处必须在同一变更内同步",
+                key
+            );
+        }
+        for key in [
+            "likes_features",
+            "tweet_features",
+            "user_by_screen_name_features",
+            "user_tweets_features",
+        ] {
+            let parsed: Value = serde_json::from_str(
+                defaults
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_else(|| panic!("defaults.json 缺少字段 {}", key)),
+            )
+            .unwrap_or_else(|e| panic!("defaults.json 的 {} 不是合法 JSON: {e}", key));
+            assert!(
+                parsed.as_object().is_some_and(|o| !o.is_empty()),
+                "defaults.json 的 {} 必须是非空 JSON object（第 4 层仅为 `{{}}` 兜底）",
+                key
+            );
+        }
+        for (key, hardcoded) in [
+            ("likes_fieldtoggles", FALLBACK_LIKES_FIELD_TOGGLES),
+            ("tweet_fieldtoggles", FALLBACK_TWEET_FIELD_TOGGLES),
+            (
+                "user_by_screen_name_fieldtoggles",
+                FALLBACK_USER_BY_SCREEN_NAME_FIELD_TOGGLES,
+            ),
+            (
+                "user_tweets_fieldtoggles",
+                FALLBACK_USER_TWEETS_FIELD_TOGGLES,
+            ),
+        ] {
+            let parsed: Value = serde_json::from_str(hardcoded)
+                .unwrap_or_else(|e| panic!("{} 兜底不是合法 JSON: {e}", key));
+            assert!(
+                parsed.as_object().is_some_and(|o| !o.is_empty()),
+                "{} 兜底必须是非空 JSON object",
+                key
+            );
+        }
+    }
+
+    #[test]
     fn vendored_defaults_has_no_secrets() {
         let v: Value = serde_json::from_str(VENDORED_DEFAULTS).unwrap();
         let obj = v.as_object().unwrap();
@@ -425,6 +594,12 @@ mod tests {
             tweet_detail_api_url: "".into(),
             tweet_features: "".into(),
             tweet_fieldtoggles: "".into(),
+            user_by_screen_name_api_url: "".into(),
+            user_by_screen_name_features: "".into(),
+            user_by_screen_name_fieldtoggles: "".into(),
+            user_tweets_api_url: "".into(),
+            user_tweets_features: "".into(),
+            user_tweets_fieldtoggles: "".into(),
             mock_mode: false,
             mock_liked_tweets_file: "".into(),
         };
