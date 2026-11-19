@@ -255,6 +255,7 @@ pub async fn user_tweets(req: UserTweetsRequest) -> Result<UserTweetsOutput, Err
 
     let config = Config::load()
         .map_err(|e| ErrorPayload::new(ErrorKind::InternalError, format!("加载配置失败: {}", e)))?;
+    let manifest_paths = crate::download_record::RecordPaths::from_config(&config);
 
     if !config.is_configured() {
         return Err(ErrorPayload::new(
@@ -294,6 +295,8 @@ pub async fn user_tweets(req: UserTweetsRequest) -> Result<UserTweetsOutput, Err
         req.include_raw,
     )
     .await?;
+
+    let _ = crate::download_record::observe_tweets(&manifest_paths, "user_tweets", &tweets);
 
     Ok(UserTweetsOutput {
         user,

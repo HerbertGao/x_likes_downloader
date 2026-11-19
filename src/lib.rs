@@ -1,5 +1,6 @@
 // Existing modules — used by the legacy human-facing CLI (`xld download` etc.)
 pub mod config;
+pub mod download_record;
 pub mod downloader;
 pub mod envelope;
 pub mod error;

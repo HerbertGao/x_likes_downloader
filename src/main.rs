@@ -659,28 +659,28 @@ async fn run_download_legacy() -> Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("下载失败: {} ({:?})", e.message, e.kind))?;
 
-    // 按 tweet_id 聚合：任何一个媒体成功（或已跳过即视为完成）就记录 tweet_id
-    let mut succeeded_tweets: HashSet<String> = HashSet::new();
+    // 按 tweet_id 聚合。Legacy 口径不变：任何一个媒体成功（或已跳过）就记录整条 tweet。
+    // MCP 的两阶段记录不使用这条规则，见 `download_record`。
+    let succeeded_tweets =
+        x_likes_downloader::download_record::legacy_recordable_tweet_ids(&result.downloads);
     let mut tweets_all_failed: HashSet<String> = HashSet::new();
     for r in &result.downloads {
-        match r.status {
-            x_likes_downloader::agent::types::DownloadStatus::Downloaded
-            | x_likes_downloader::agent::types::DownloadStatus::SkippedExisting => {
-                succeeded_tweets.insert(r.tweet_id.clone());
-            }
-            x_likes_downloader::agent::types::DownloadStatus::Failed => {
-                tweets_all_failed.insert(r.tweet_id.clone());
-            }
-            // CLI 路径不传 cancel token，理论上不可达；实际若发生则不计入两类聚合。
-            x_likes_downloader::agent::types::DownloadStatus::Cancelled => {}
+        if r.status == x_likes_downloader::agent::types::DownloadStatus::Failed {
+            tweets_all_failed.insert(r.tweet_id.clone());
         }
     }
-    // 记录每条任何媒体都成功的 tweet
+    // 记录每条任一媒体成功的 tweet。一次锁内重写，避免 N 次全文件替换。
     for tid in &succeeded_tweets {
         tweets_all_failed.remove(tid);
-        if !known_ids.contains(tid) {
-            append_downloaded_id(&config.download_record, tid)?;
-        }
+    }
+    let mut to_record: Vec<String> = succeeded_tweets
+        .iter()
+        .filter(|tid| !known_ids.contains(*tid))
+        .cloned()
+        .collect();
+    to_record.sort();
+    if !to_record.is_empty() {
+        append_downloaded_ids(&config.download_record, &to_record)?;
     }
 
     println!("\n=== 处理总结 ===");
@@ -712,15 +712,8 @@ fn load_downloaded_ids(filename: &str) -> std::collections::HashSet<String> {
         .unwrap_or_default()
 }
 
-fn append_downloaded_id(filename: &str, tweet_id: &str) -> Result<()> {
-    use std::io::Write;
-    if let Some(parent) = std::path::Path::new(filename).parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(filename)?
-        .write_all(format!("{}\n", tweet_id).as_bytes())?;
+fn append_downloaded_ids(filename: &str, tweet_ids: &[String]) -> Result<()> {
+    x_likes_downloader::download_record::append_new_ids(std::path::Path::new(filename), tweet_ids)
+        .map_err(|err| anyhow::anyhow!(err.message))?;
     Ok(())
 }

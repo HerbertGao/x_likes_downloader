@@ -135,7 +135,7 @@ x_likes_downloader auth status --json
 
 需要绝对路径时用 `command -v x_likes_downloader` 的结果替换 `command`。各客户端的配置文件位置请查该客户端自己的文档——本 skill 不再维护逐客户端的注册脚本。
 
-注册成功后 Agent 的工具列表里会出现 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` / `fetch_tweet` / `user_tweets`。验证：
+注册成功后 Agent 的工具列表里会出现 `list_likes` / `download_media` / `commit_download_record` / `get_download_record_batch` / `auth_status` / `setup_from_curl` / `fetch_tweet` / `user_tweets`。`download_media` 不会自动写下载记录；Agent 应在下载后用客户端确认卡询问，用户同意才调用 `commit_download_record`。验证：
 
 ```bash
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | x_likes_downloader serve --mcp

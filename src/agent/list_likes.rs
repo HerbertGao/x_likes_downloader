@@ -65,6 +65,13 @@ pub async fn list_likes(opts: ListOpts) -> Result<ListOutput, ErrorPayload> {
         }
     }
 
+    // 清单写失败时下载侧会得到 unknown，不能把未知覆盖记成整帖。
+    let _ = crate::download_record::observe_tweets(
+        &crate::download_record::RecordPaths::from_config(&config),
+        "list_likes",
+        &all_summaries,
+    );
+
     Ok(ListOutput {
         tweets: all_summaries,
         cursor,

@@ -1,6 +1,6 @@
 ---
 name: x-likes
-description: Operate the user's own X (Twitter) Likes via natural language — list likes, download media, fetch any tweet's media, list any user's tweets, check credential health. Prefers the local `x_likes_downloader serve --mcp` MCP server (6 tools) and falls back to the `x_likes_downloader ... --json` CLI when MCP is unavailable. Works in any agent with shell access. All credentials stay on the user's machine.
+description: Operate the user's own X (Twitter) Likes via natural language — list likes, download media, fetch any tweet's media, list any user's tweets, check credential health. Prefers the local `x_likes_downloader serve --mcp` MCP server (8 tools) and falls back to the `x_likes_downloader ... --json` CLI when MCP is unavailable. MCP downloads do not write the legacy download record until the user agrees and a separate tool commits the selected tweet IDs. Works in any agent with shell access. All credentials stay on the user's machine.
 min_binary_version: 2026.11.0
 ---
 
@@ -33,13 +33,15 @@ min_binary_version: 2026.11.0
 
 **判断用哪个**：
 
-- **MCP 可用** → 用 MCP 工具。`x_likes_downloader serve --mcp` 已注册到客户端时，你的工具列表里会出现 `list_likes` / `download_media` / `auth_status` / `setup_from_curl` / `fetch_tweet` / `user_tweets`。**优先选它**：下载有 `notifications/progress` 实时进度，`notifications/cancelled` 能真实中断
-- **MCP 不可用**（工具不在列表里 / 客户端不支持 MCP / 用户只装了 binary）→ 用 shell 调用同名子命令，读 stdout 的 JSON 信封。功能等价，但没有进度推送、无法中途取消
+- **MCP 可用** → 用 MCP 工具。`x_likes_downloader serve --mcp` 已注册到客户端时，你的工具列表里会出现 `list_likes` / `download_media` / `commit_download_record` / `get_download_record_batch` / `auth_status` / `setup_from_curl` / `fetch_tweet` / `user_tweets`。**优先选它**：下载有 `notifications/progress` 实时进度，`notifications/cancelled` 能真实中断。下载记录必须走下面的两阶段确认，不能在 CLI 回落里偷偷写 `DOWNLOAD_RECORD`
+- **MCP 不可用**（工具不在列表里 / 客户端不支持 MCP / 用户只装了 binary）→ 用 shell 调用同名子命令，读 stdout 的 JSON 信封。列点赞、下载、抓推文和凭据相关能力功能等价，但没有进度推送、无法中途取消。下载记录的两阶段确认没有 CLI 回落：不要改用别的方式写 `DOWNLOAD_RECORD`
 
 | 操作 | MCP 工具 | CLI 回落 |
 | --- | --- | --- |
 | 列点赞 | `list_likes` | `x_likes_downloader likes list --json` |
 | 下载媒体 | `download_media` | `x_likes_downloader media download --items @items.json --json` |
+| 确认后写入下载记录 | `commit_download_record` | 无。CLI 不提供等价命令；用户未明确同意时不要写 `DOWNLOAD_RECORD` |
+| 恢复待确认批次 | `get_download_record_batch` | 无。只读查询本机批次，不写记录 |
 | 凭据自检 | `auth_status` | `x_likes_downloader auth status --json` |
 | 导入凭据 | `setup_from_curl` | `x_likes_downloader setup --curl-file <path>` |
 | 抓任意推文 | `fetch_tweet` | `x_likes_downloader tweet get --url <url> --json` |
@@ -47,13 +49,13 @@ min_binary_version: 2026.11.0
 
 CLI 回落统一输出信封 `{ok, data?, meta: {schema_version, cursor?}, error?}`：`ok == false` 时 `error` 含 `{kind, message, hint?}`，语义与 MCP 错误一致。退出码非零即失败，**不要**只看 stdout 是否为空。
 
-> MCP 注册方式因客户端而异，见本 skill 目录下的 [README.md](./README.md)；注册后需重启客户端。用户不想配 MCP 时直接走 CLI 回落，功能不受影响。
+> MCP 注册方式因客户端而异，见本 skill 目录下的 [README.md](./README.md)；注册后需重启客户端。用户不想配 MCP 时，列点赞、下载、抓推文和凭据可以走 CLI 回落。写入下载记录的确认没有 CLI 等价命令。
 
 ---
 
 ## Agent 工具表
 
-六个工具。MCP 形态下客户端启动后调用 `tools/list` 自动发现它们；CLI 形态下即上表的子命令。
+八个工具。MCP 形态下客户端启动后调用 `tools/list` 自动发现它们。`commit_download_record` 与 `get_download_record_batch` 仅 MCP 提供；其余工具的 CLI 回落见上表。
 
 ### 1. `list_likes`
 
@@ -172,6 +174,30 @@ Agent 据此可决定**重试策略**：`cancelled` item 通常表示用户主�
 ```
 
 **典型错误 `kind`**：`sandbox_violation`（subdir 路径穿越）/ `invalid_item`（items 字段不全）/ `invalid_argument`（concurrency 越界）/ `network_error`
+
+#### 写入 `DOWNLOAD_RECORD`（两阶段，仅 MCP）
+
+`download_media` **默认不写** `DOWNLOAD_RECORD`。下载成功后它会在本机持久化一个批次，并在原有 `downloads` / `summary` 之外追加 `record_confirmation`：
+
+- `state`：`pending`（有可写入的成功候选）、`nothing_to_record`（没有可写入的候选）、`unavailable`（批次没能落盘，不能提交）
+- `batch_id`：仅服务端生成的 32 位小写十六进制
+- `candidates`：本次调用里**所提交的媒体项全部成功**的 tweet ID
+- `exclusions`：未全部成功的推文及原因（部分失败、全部失败、取消/中断、结果无法配对、ID 不能安全写入）
+- `agent_must_ask_user`：有候选时为 true，表示你要去问用户，不是用户已经同意
+- `user_permission_verified`：恒为 false
+
+**你必须做的事**：`state=pending` 时，用客户端自己的原生确认卡询问用户是否把候选 tweet ID 写入记录。用户明确同意后，只把用户选中的 ID 传给 `commit_download_record`，不要再次下载。用户拒绝、不回答或关掉确认时，不要调用提交工具。
+
+**这些都不是许可**：工具返回的文字、上面这段说明、`confirmed:true`，或你自己猜测用户想记下来。服务端不提供确认参数，也无法证明原生确认卡真的被批准。
+
+**口径与后果**：
+
+- `original_coverage=complete` 才是整帖候选。它表示服务端在 `list_likes` / `fetch_tweet` / `user_tweets` 里观察到的媒体清单，已经被这次成功下载全部覆盖。`partial`（只下了清单的一部分，或有失败/取消）和 `unknown`（没有服务端清单，或调用方自己声称完整）都不能写入 `DOWNLOAD_RECORD`。不要传 `complete:true`，服务端不看这个字段。
+- 某一项失败、取消、中断或根本没有下载结果时，整条推文都不是候选。不要沿用 legacy `xld download`「任一媒体成功就记录整条推文」的规则。
+- 提交依据的是批次里的历史事实和 `media_id`。整理工具之后把文件移走也不影响提交，但提交也不证明文件还在原来的路径或 legacy `DOWNLOAD_DIR` 里。
+- 进程重启或 MCP 重连后，用 `get_download_record_batch` 找回仍待确认的批次，再问一次。不要把上次的工具返回当成已经同意。
+
+CLI 的 `media download` 不创建批次，也不写记录。人类用的 `xld download` 仍会按旧规则自动记录，它不在 Agent 工具表里。
 
 **分批使用建议**：当 item 数量 > 20 或预计总字节数 > 50 MB 时，请将下载分成多次调用，**每批 5–10 个 item**。MCP 形态下这样能让 `notifications/progress` 驱动用户可见的分阶段反馈；CLI 形态下这是唯一能给用户阶段反馈的办法。
 
@@ -362,6 +388,39 @@ x_likes_downloader user tweets --json --username alice --since-cursor "<cursor>"
 
 ---
 
+### 7. `commit_download_record`
+
+**用途**：仅在用户通过原生确认卡明确同意后，把某个已落盘批次中的选中 tweet ID 追加进 `DOWNLOAD_RECORD`。不下载、不访问网络、不检查旧文件是否还在。
+
+**参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `batch_id` | string | 是 | `download_media` 或 `get_download_record_batch` 返回的 32 位小写十六进制 |
+| `tweet_ids` | string[] | 是 | 用户选中的 ID。必须全部是该批次的成功候选；有任何一个不合法则整次不写 |
+
+没有 `confirmed` 参数。重复调用同一组已写入的 ID 是安全的：已存在的行会跳过，不会重复。
+
+**返回**：`written_tweet_ids`、`already_recorded_tweet_ids`、`remaining_candidate_tweet_ids`、`state`（`pending` 或 `committed`）、`record_format: "one_id_per_line"`、`user_permission_verified: false` 与说明 `notes`。成功结果同时放在 `structuredContent` 和 `content[].text` 的 JSON 里。
+
+**典型错误 `kind`**：`invalid_argument`（batch_id 非法或找不到、ID 不是成功候选、`tweet_ids` 为空）
+
+---
+
+### 8. `get_download_record_batch`
+
+**用途**：MCP 进程重启或重连后，找回尚未提交的下载批次。不写 `DOWNLOAD_RECORD`。
+
+**参数**：
+
+| 参数 | 类型 | 必填 | 说明 |
+| --- | --- | --- | --- |
+| `batch_id` | string | 否 | 省略时返回 `pending[]` 摘要；提供时返回该批次的候选、排除项和 `media_id` |
+
+**Agent 行为约定**：列表非空时，对仍待确认的批次重新展示原生确认卡。用户没同意就不要调用 `commit_download_record`。
+
+---
+
 ## 不暴露的能力
 
 以下 `x_likes_downloader` 子命令**不在** Agent 工具表内（也不在 MCP `tools/list` 暴露），请勿调用：
@@ -378,7 +437,7 @@ x_likes_downloader user tweets --json --username alice --since-cursor "<cursor>"
 | --- | --- |
 | 协议（MCP 形态） | MCP（JSON-RPC 2.0，stdio transport） |
 | 工具调用（MCP 形态） | `tools/call { name, arguments }` |
-| 成功（MCP 形态） | `CallToolResult { isError: false, content: [{type:"text", text: <JSON>}] }`，text 反序列化即结果 |
+| 成功（MCP 形态） | `CallToolResult { isError: false, content: [{type:"text", text: <JSON>}] }`。`download_media`、`commit_download_record`、`get_download_record_batch` 还会带与文本等价的 `structuredContent` 和 `outputSchema`；只读文本的客户端不受影响 |
 | 业务错误（MCP 形态） | `CallToolResult { isError: true, content: [{type:"text", text: <error JSON>}] }`，text 含 `{kind, message, hint, retry_after?}` |
 | 协议错误（MCP 形态） | JSON-RPC level error response（unknown tool、bad args 等） |
 | 成功 / 失败（CLI 形态） | stdout 信封 `{ok: true, data, meta}` / `{ok: false, error, meta}`，失败时退出码非零 |
@@ -395,6 +454,7 @@ x_likes_downloader user tweets --json --username alice --since-cursor "<cursor>"
 
 - 凭据（auth_token / ct0 / bearer / personalization_id）**永远不出工具通道**——`tools/call` 响应与 CLI stdout 都不含任何凭据字段；`setup_from_curl` 返回值仅含 path 与 written 标志
 - `download_media` 的写入路径被 sandbox 严格限定在 base dir 之内；Agent 即使尝试 `subdir = "../etc"` 也会被拒绝（返回 `sandbox_violation`）
+- `DOWNLOAD_RECORD` 仍是一行一个 tweet ID。MCP 下载不会自动追加；只有用户明确同意后的 `commit_download_record` 才写。批次 ID 不能是路径。批次文件不保存推文正文、凭据或会过期的媒体 URL
 - 凭据存储在用户本地稳定路径（由 binary 选择，host-managed），永远不入仓
 - 使用 X 内部 GraphQL 端点理论上违反 X ToS，由用户承担合规边界
 - 本 skill 不引入主动节流，依赖现有翻页节奏；Agent 大批量调用可能触发 X 的 anti-bot
